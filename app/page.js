@@ -1,20 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 
-// ─── Data ─────────────────────────────────────────────────────────────────────
+// ─── Agent definitions ────────────────────────────────────────────────────────
 
 const AGENTS = [
-  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars", model: "Opus",  conditional: false },
-  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",  model: "Haiku", conditional: true  },
-  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",               model: "Haiku", conditional: false },
-  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",   model: "Haiku", conditional: false },
-  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",             model: "Haiku", conditional: true  },
-  { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                    model: "Opus",  conditional: false },
+  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Opus",   conditional: false },
+  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Haiku",  conditional: true  },
+  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Haiku",  conditional: false },
+  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Haiku",  conditional: false },
+  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Haiku",  conditional: true  },
+  { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus",   conditional: false },
 ];
 
+const ANALYTICS_TAB = 99; // special tab index for LinkedIn analytics
+
 const PLATFORMS = ["LinkedIn", "Twitter/X", "Instagram", "TikTok", "Facebook", "Bluesky"];
-const TONES = ["Professional", "Conversational", "Bold & provocative", "Inspirational", "Educational", "Humorous"];
+const TONES     = ["Professional", "Conversational", "Bold & provocative", "Inspirational", "Educational", "Humorous"];
 
 const defaultBrief = {
   name: "", role: "", industry: "", goal: "",
@@ -23,12 +25,92 @@ const defaultBrief = {
   challenge: "", differentiator: "",
 };
 
+// ─── CSV parser ───────────────────────────────────────────────────────────────
+
+function parseCSVLine(line) {
+  const result = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    if (line[i] === '"') { inQuotes = !inQuotes; }
+    else if (line[i] === "," && !inQuotes) { result.push(current); current = ""; }
+    else { current += line[i]; }
+  }
+  result.push(current);
+  return result.map(v => v.trim().replace(/^"|"$/g, ""));
+}
+
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const headers = parseCSVLine(lines[0]);
+  const rows = lines.slice(1).map(line => {
+    const vals = parseCSVLine(line);
+    const row = {};
+    headers.forEach((h, i) => { row[h] = vals[i] || ""; });
+    return row;
+  }).filter(r => Object.values(r).some(v => v));
+  return { headers, rows };
+}
+
+// Find a column by trying multiple possible names
+function findCol(headers, candidates) {
+  return headers.find(h => candidates.some(c => h.toLowerCase().includes(c.toLowerCase())));
+}
+
+function parseLinkedInData(csvText, filename) {
+  const { headers, rows } = parseCSV(csvText);
+  if (!headers.length) return null;
+
+  // Detect file type from headers
+  const hasMetrics = headers.some(h => /impression|click|reaction|engagement/i.test(h));
+  const hasPostText = headers.some(h => /commentary|sharecommentary|post|text|content/i.test(h));
+
+  const textCol       = findCol(headers, ["ShareCommentary", "commentary", "post", "text", "content", "description"]);
+  const dateCol       = findCol(headers, ["Date", "date", "created", "published"]);
+  const impressionCol = findCol(headers, ["Impressions", "impression", "views", "reach"]);
+  const clickCol      = findCol(headers, ["Clicks", "click"]);
+  const reactionCol   = findCol(headers, ["Reactions", "reaction", "likes", "like"]);
+  const commentCol    = findCol(headers, ["Comments", "comment"]);
+  const repostCol     = findCol(headers, ["Reposts", "repost", "shares", "reshares"]);
+
+  const posts = rows.map(row => ({
+    date:        dateCol       ? row[dateCol]        : "",
+    text:        textCol       ? row[textCol]        : Object.values(row).find(v => v.length > 30) || "",
+    impressions: impressionCol ? (parseInt(row[impressionCol]) || 0) : null,
+    clicks:      clickCol      ? (parseInt(row[clickCol])      || 0) : null,
+    reactions:   reactionCol   ? (parseInt(row[reactionCol])   || 0) : null,
+    comments:    commentCol    ? (parseInt(row[commentCol])    || 0) : null,
+    reposts:     repostCol     ? (parseInt(row[repostCol])     || 0) : null,
+  })).filter(p => p.text || p.impressions);
+
+  return { filename, headers, posts, hasMetrics, hasPostText };
+}
+
 // ─── Prompt builder ────────────────────────────────────────────────────────────
 
-function buildPrompts(brief) {
+function buildPrompts(brief, linkedInFiles) {
   const platformList = brief.platforms.length ? brief.platforms.join(", ") : "all major platforms";
   const existingBlock = brief.hasExistingContent && brief.existingContent
     ? `\n\nEXISTING CONTENT:\n${brief.existingContent}` : "";
+
+  // Add LinkedIn data to context if available
+  let linkedInBlock = "";
+  if (linkedInFiles.length > 0) {
+    const allPosts = linkedInFiles.flatMap(f => f.posts).slice(0, 50);
+    const hasMetrics = linkedInFiles.some(f => f.hasMetrics);
+    if (hasMetrics) {
+      const topPosts = [...allPosts]
+        .filter(p => p.impressions)
+        .sort((a, b) => (b.impressions || 0) - (a.impressions || 0))
+        .slice(0, 10);
+      linkedInBlock = `\n\nLINKEDIN ANALYTICS DATA:\n` +
+        topPosts.map(p => `- "${p.text?.slice(0, 120)}..." | Impressions: ${p.impressions} | Reactions: ${p.reactions} | Comments: ${p.comments} | Clicks: ${p.clicks}`).join("\n");
+    } else {
+      linkedInBlock = `\n\nLINKEDIN POSTS (${allPosts.length} posts):\n` +
+        allPosts.slice(0, 20).map(p => `[${p.date}] ${p.text?.slice(0, 200)}`).join("\n\n");
+    }
+  }
 
   const ctx = `BRAND BRIEF:
 Name/Handle: ${brief.name || "Not specified"}
@@ -39,60 +121,86 @@ Target Audience: ${brief.audience || "Not specified"}
 Platforms: ${platformList}
 Tone of Voice: ${brief.tone}
 Biggest Challenge: ${brief.challenge || "Not specified"}
-What Makes Them Different: ${brief.differentiator || "Not specified"}${existingBlock}`;
+What Makes Them Different: ${brief.differentiator || "Not specified"}${existingBlock}${linkedInBlock}`;
 
   return [
-    // 0: Brand Strategist
-    `You are an expert social media brand strategist.\n\n${ctx}\n\nDeliver:\n1. Positioning statement — who they are, who they serve, what makes them distinct (2–3 sentences)\n2. Tone of voice — how they should sound, language to use and avoid\n3. 3–5 content pillars — the core themes they should own\n4. Platform strategy — which to prioritise, why, and how to adapt per platform\n5. What to stop doing — common mistakes for someone in their position\n\nBe specific to their role and goals. No generic advice.`,
+    `You are an expert social media brand strategist.\n\n${ctx}\n\nDeliver:\n1. Positioning statement (2–3 sentences)\n2. Tone of voice — how they should sound, language to use and avoid\n3. 3–5 content pillars — the core themes they should own\n4. Platform strategy — which to prioritise and why\n5. What to stop doing immediately\n\nBe specific. No generic advice.`,
 
-    // 1: Content Auditor
-    `You are a sharp social media content analyst.\n\n${ctx}\n\nAudit their existing content:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, or angles\n4. Consistency — is there a clear voice, or is it scattered?\n5. Top 3 highest-impact changes to make immediately\n\nBe direct. Don't soften criticism.`,
+    `You are a sharp social media content analyst.\n\n${ctx}\n\nAudit their content${linkedInBlock ? " using the LinkedIn data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
 
-    // 2: Content Ideator
-    `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific, ready-to-use post ideas. For each:\n- A compelling hook (opening line or concept)\n- Which platforms it suits\n- Why it will resonate with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats: opinion, personal story, data-backed take, contrarian view, how-to, list. Prioritise non-obvious ideas specific to their niche.`,
+    `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
 
-    // 3: Post Writer
-    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite 3 complete, publish-ready posts:\n\nPOST 1: LinkedIn long-form (300–500 words) — thought leadership or personal story\nPOST 2: Twitter/X thread (6–8 tweets) — punchy and shareable\nPOST 3: Instagram caption — visual storytelling with a strong CTA\n\nEach should be distinct in angle but consistent in brand voice. Write in first person as if you are them.`,
+    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite 3 complete, publish-ready posts:\n\nPOST 1: LinkedIn long-form (300–500 words)\nPOST 2: Twitter/X thread (6–8 tweets)\nPOST 3: Instagram caption with CTA\n\nFirst person. Authentic voice. Each distinct in angle.`,
 
-    // 4: Repurposer
-    `You are a content repurposing expert.\n\n${ctx}\n\nRepurpose the existing content into:\n1. LinkedIn post (150–300 words, professional)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption (personal, visual, with hashtags)\n4. TikTok script (60–90 seconds, hook + points + CTA)\n5. Facebook post (community-oriented)\n6. Bluesky post (similar to Twitter, slightly different tone)\n\nKeep the core message consistent but adapt format and tone for each platform.`,
+    `You are a content repurposing expert.\n\n${ctx}\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
 
-    // 5: Contrarian
-    `You are a brutally honest social media critic.\n\n${ctx}\n\nTear this strategy apart before it gets published:\n1. What is painfully generic — how many others say the exact same thing?\n2. Which ideas won't land and why\n3. Where are they being inauthentic or trying too hard\n4. What assumptions are likely wrong\n5. What their audience will actually ignore\n6. The single biggest mistake they're about to make\n7. What a truly distinctive version of this brand would look like instead\n\nRank from most fatal to least fatal. Be the honest voice nobody else will be.`,
+    `You are a brutally honest social media critic.\n\n${ctx}\n\nTear this strategy apart:\n1. What is painfully generic\n2. Which ideas won't land and why\n3. Where they're being inauthentic\n4. What assumptions are wrong\n5. What their audience will actually ignore\n6. The single biggest mistake they're about to make\n7. What a truly distinctive version would look like\n\nRank from most fatal to least fatal.`,
   ];
 }
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [view, setView]           = useState("wizard"); // "wizard" | "app"
-  const [step, setStep]           = useState(0);        // 0, 1, 2
-  const [brief, setBrief]         = useState(defaultBrief);
-  const [outputs, setOutputs]     = useState({});       // { agentIndex: { status, text } }
-  const [activeTab, setActiveTab] = useState(0);
-  const [running, setRunning]     = useState(false);
-  const [toast, setToast]         = useState({ msg: "", show: false, error: false });
+  const [view, setView]               = useState("wizard");
+  const [step, setStep]               = useState(0);
+  const [brief, setBrief]             = useState(defaultBrief);
+  const [outputs, setOutputs]         = useState({});
+  const [activeTab, setActiveTab]     = useState(0);
+  const [running, setRunning]         = useState(false);
+  const [linkedInFiles, setLinkedInFiles] = useState([]); // parsed LinkedIn CSV data
+  const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
-  // ─── Brief helpers ───────────────────────────────────────────────────────────
+  // Chat state per agent
+  const [chatHistories, setChatHistories] = useState({}); // { agentIndex: [{ role, content }] }
+  const [chatInputs, setChatInputs]       = useState({}); // { agentIndex: string }
+  const [chatStreaming, setChatStreaming]  = useState({}); // { agentIndex: boolean }
+
+  // ─── Brief helpers ──────────────────────────────────────────────────────────
 
   const update = (field, val) => setBrief(p => ({ ...p, [field]: val }));
+  const togglePlatform = (p) => setBrief(prev => ({
+    ...prev,
+    platforms: prev.platforms.includes(p)
+      ? prev.platforms.filter(x => x !== p)
+      : [...prev.platforms, p],
+  }));
 
-  const togglePlatform = (p) =>
-    setBrief(prev => ({
-      ...prev,
-      platforms: prev.platforms.includes(p)
-        ? prev.platforms.filter(x => x !== p)
-        : [...prev.platforms, p],
-    }));
+  // ─── LinkedIn upload ────────────────────────────────────────────────────────
 
-  // ─── Which agents are visible (based on hasExistingContent) ─────────────────
+  async function handleLinkedInUpload(e) {
+    const files = Array.from(e.target.files);
+    const parsed = [];
+    for (const file of files) {
+      const text = await file.text();
+      const data = parseLinkedInData(text, file.name);
+      if (data && data.posts.length > 0) parsed.push(data);
+    }
+    if (parsed.length > 0) {
+      setLinkedInFiles(prev => {
+        const existing = new Set(prev.map(f => f.filename));
+        return [...prev, ...parsed.filter(f => !existing.has(f.filename))];
+      });
+      showToast(`${parsed.reduce((n, f) => n + f.posts.length, 0)} posts loaded`);
+    } else {
+      showToast("Could not parse CSV — check the file format", true);
+    }
+    e.target.value = "";
+  }
 
-  const visibleAgents = AGENTS.filter(a => !a.conditional || brief.hasExistingContent);
+  function removeLinkedInFile(filename) {
+    setLinkedInFiles(prev => prev.filter(f => f.filename !== filename));
+  }
 
-  // ─── Streaming ───────────────────────────────────────────────────────────────
+  // ─── Visible agents ─────────────────────────────────────────────────────────
+
+  const visibleAgents = AGENTS.filter(a => !a.conditional || brief.hasExistingContent || linkedInFiles.length > 0);
+
+  // ─── Streaming agent output ─────────────────────────────────────────────────
 
   async function streamAgent(agentIndex, prompt) {
     setOutputs(p => ({ ...p, [agentIndex]: { status: "streaming", text: "" } }));
+    // Reset chat when re-running
+    setChatHistories(p => ({ ...p, [agentIndex]: [] }));
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -117,40 +225,113 @@ export default function Home() {
     }
   }
 
+  // ─── Chat with agent ─────────────────────────────────────────────────────────
+
+  async function sendChat(agentIndex) {
+    const userMsg = (chatInputs[agentIndex] || "").trim();
+    if (!userMsg) return;
+
+    const agent = AGENTS.find(a => a.index === agentIndex);
+    const agentOutput = outputs[agentIndex]?.text || "";
+    const prevHistory = chatHistories[agentIndex] || [];
+
+    // Build message history
+    // First message sets the agent's context (only if this is the first chat message)
+    let history;
+    if (prevHistory.length === 0) {
+      const systemMessage = `You are the ${agent.name} from Voltage Media. You just completed an analysis for this brand brief:
+
+Name: ${brief.name || "Not specified"}, Role: ${brief.role || "Not specified"}, Industry: ${brief.industry || "Not specified"}
+
+Your analysis was:
+${agentOutput}
+
+The user wants to follow up on your analysis. Stay in character as ${agent.name}. Be direct, specific, and helpful.`;
+
+      history = [
+        { role: "user", content: systemMessage },
+        { role: "assistant", content: "I'm ready to discuss my analysis. What would you like to explore?" },
+        { role: "user", content: userMsg },
+      ];
+    } else {
+      history = [...prevHistory, { role: "user", content: userMsg }];
+    }
+
+    // Update UI — add user message, clear input, set streaming
+    setChatHistories(p => ({
+      ...p,
+      [agentIndex]: history,
+    }));
+    setChatInputs(p => ({ ...p, [agentIndex]: "" }));
+    setChatStreaming(p => ({ ...p, [agentIndex]: true }));
+
+    // Add empty assistant message that we'll stream into
+    const historyWithPending = [...history, { role: "assistant", content: "" }];
+    setChatHistories(p => ({ ...p, [agentIndex]: historyWithPending }));
+
+    try {
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, agentIndex, isChat: true }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        setChatHistories(p => {
+          const hist = [...(p[agentIndex] || [])];
+          const last = hist[hist.length - 1];
+          if (last?.role === "assistant") {
+            hist[hist.length - 1] = { ...last, content: last.content + chunk };
+          }
+          return { ...p, [agentIndex]: hist };
+        });
+      }
+    } catch (err) {
+      setChatHistories(p => {
+        const hist = [...(p[agentIndex] || [])];
+        hist[hist.length - 1] = { role: "assistant", content: "Error: " + err.message };
+        return { ...p, [agentIndex]: hist };
+      });
+    } finally {
+      setChatStreaming(p => ({ ...p, [agentIndex]: false }));
+    }
+  }
+
   // ─── Run all ─────────────────────────────────────────────────────────────────
 
   async function runAll() {
     setRunning(true);
-    const prompts = buildPrompts(brief);
+    const prompts = buildPrompts(brief, linkedInFiles);
     await Promise.allSettled(
       visibleAgents.map(a => streamAgent(a.index, prompts[a.index]))
     );
     setRunning(false);
   }
 
-  // ─── Go from wizard to app ───────────────────────────────────────────────────
+  async function rerunAgent(agentIndex) {
+    const prompts = buildPrompts(brief, linkedInFiles);
+    await streamAgent(agentIndex, prompts[agentIndex]);
+  }
 
   function startApp() {
     setView("app");
     setActiveTab(visibleAgents[0]?.index ?? 0);
     setOutputs({});
-    // Small delay so the layout renders before streaming starts
+    setChatHistories({});
     setTimeout(runAll, 100);
   }
 
-  // ─── Re-run a single agent ────────────────────────────────────────────────────
-
-  async function rerunAgent(agentIndex) {
-    const prompts = buildPrompts(brief);
-    await streamAgent(agentIndex, prompts[agentIndex]);
-  }
-
-  // ─── Copy ────────────────────────────────────────────────────────────────────
+  // ─── Copy ─────────────────────────────────────────────────────────────────
 
   function copyAgent(index) {
     const text = outputs[index]?.text;
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard"));
+    navigator.clipboard.writeText(text).then(() => showToast("Copied"));
   }
 
   function showToast(msg, error = false) {
@@ -158,14 +339,76 @@ export default function Home() {
     setTimeout(() => setToast(t => ({ ...t, show: false })), 2200);
   }
 
-  // ─── Brief summary string ─────────────────────────────────────────────────────
+  // ─── LinkedIn analytics summary ─────────────────────────────────────────────
 
-  const briefSummary = [
-    brief.name,
-    brief.role,
-    brief.platforms.length ? brief.platforms.slice(0, 3).join(", ") : null,
-    brief.tone,
-  ].filter(Boolean);
+  function renderAnalytics() {
+    const allPosts = linkedInFiles.flatMap(f => f.posts);
+    const hasMetrics = linkedInFiles.some(f => f.hasMetrics);
+    const totalPosts = allPosts.length;
+
+    if (!totalPosts) return <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-title">No LinkedIn data loaded</div><div className="empty-sub">Upload your LinkedIn CSV export in the brief to see analytics here.</div></div>;
+
+    if (!hasMetrics) {
+      // Text-only analysis
+      return (
+        <div className="analytics-wrap">
+          <div className="analytics-heading">LinkedIn Posts — Content Analysis</div>
+          <div className="analytics-note">No metrics detected in this export. Showing content overview. For impressions and engagement data, export from your LinkedIn Analytics dashboard.</div>
+          <div className="stat-cards">
+            <div className="stat-card"><div className="stat-num">{totalPosts}</div><div className="stat-label">Posts loaded</div></div>
+            <div className="stat-card"><div className="stat-num">{Math.round(allPosts.reduce((n,p) => n + (p.text?.length || 0), 0) / totalPosts)}</div><div className="stat-label">Avg post length (chars)</div></div>
+          </div>
+          <div className="analytics-section-title">Recent posts</div>
+          <div className="posts-list">
+            {allPosts.slice(0, 10).map((p, i) => (
+              <div key={i} className="post-row">
+                {p.date && <div className="post-date">{p.date}</div>}
+                <div className="post-text">{p.text?.slice(0, 200)}{p.text?.length > 200 ? "..." : ""}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // Has metrics
+    const withImpressions = allPosts.filter(p => p.impressions);
+    const totalImpressions = withImpressions.reduce((n, p) => n + p.impressions, 0);
+    const avgImpressions = withImpressions.length ? Math.round(totalImpressions / withImpressions.length) : 0;
+    const totalReactions = allPosts.reduce((n, p) => n + (p.reactions || 0), 0);
+    const topPosts = [...withImpressions].sort((a, b) => b.impressions - a.impressions).slice(0, 5);
+    const maxImpressions = topPosts[0]?.impressions || 1;
+
+    return (
+      <div className="analytics-wrap">
+        <div className="analytics-heading">LinkedIn Analytics</div>
+        <div className="stat-cards">
+          <div className="stat-card"><div className="stat-num">{totalPosts}</div><div className="stat-label">Total posts</div></div>
+          <div className="stat-card"><div className="stat-num">{totalImpressions.toLocaleString()}</div><div className="stat-label">Total impressions</div></div>
+          <div className="stat-card"><div className="stat-num">{avgImpressions.toLocaleString()}</div><div className="stat-label">Avg impressions</div></div>
+          <div className="stat-card"><div className="stat-num">{totalReactions.toLocaleString()}</div><div className="stat-label">Total reactions</div></div>
+        </div>
+
+        <div className="analytics-section-title">Top 5 posts by impressions</div>
+        <div className="posts-list">
+          {topPosts.map((p, i) => (
+            <div key={i} className="post-row">
+              <div className="post-bar-row">
+                <div className="post-bar" style={{ width: `${(p.impressions / maxImpressions) * 100}%` }} />
+                <div className="post-metrics">
+                  <span>{p.impressions?.toLocaleString()} impressions</span>
+                  {p.reactions != null && <span>{p.reactions} reactions</span>}
+                  {p.comments != null && <span>{p.comments} comments</span>}
+                </div>
+              </div>
+              {p.date && <div className="post-date">{p.date}</div>}
+              <div className="post-text">{p.text?.slice(0, 200)}{p.text?.length > 200 ? "..." : ""}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // ════════════════════════════════════════════════════════════════════════
   //  WIZARD VIEW
@@ -174,28 +417,20 @@ export default function Home() {
   if (view === "wizard") {
     return (
       <div className="wizard-wrap">
-        <div className="wizard-logo">
-          ⚡ <span>Voltage Media</span>
-        </div>
+        <div className="wizard-logo">⚡ <span>Voltage Media</span></div>
 
-        {/* Progress bar */}
         <div className="wizard-progress">
           {[0, 1, 2].map(i => (
-            <div
-              key={i}
-              className={`progress-step ${i < step ? "done" : i === step ? "active" : ""}`}
-            />
+            <div key={i} className={`progress-step ${i < step ? "done" : i === step ? "active" : ""}`} />
           ))}
         </div>
 
         <div className="wizard-card">
 
-          {/* ── Step 0: Who are you? ── */}
           {step === 0 && (
             <div className="wizard-step" key={0}>
               <div className="wizard-heading">Who are you building for?</div>
-              <div className="wizard-sub">Tell us about yourself so every agent can tailor advice to your situation.</div>
-
+              <div className="wizard-sub">Tell us about yourself so every agent tailors advice to your situation.</div>
               <div className="field-row">
                 <div className="field">
                   <div className="field-label">Name or handle</div>
@@ -206,17 +441,14 @@ export default function Home() {
                   <input type="text" placeholder="Founder, CMO, Candidate..." value={brief.role} onChange={e => update("role", e.target.value)} />
                 </div>
               </div>
-
               <div className="field">
                 <div className="field-label">Industry or niche</div>
                 <input type="text" placeholder="Blockchain, Climate tech, Local politics..." value={brief.industry} onChange={e => update("industry", e.target.value)} />
               </div>
-
               <div className="field">
                 <div className="field-label">What do you want to achieve?</div>
-                <textarea rows={3} placeholder="e.g. Build a following as a blockchain founder, attract institutional investors, win a state house seat, get speaking invitations..." value={brief.goal} onChange={e => update("goal", e.target.value)} />
+                <textarea rows={3} placeholder="e.g. Build a following as a blockchain founder, get speaking invitations, attract institutional investors..." value={brief.goal} onChange={e => update("goal", e.target.value)} />
               </div>
-
               <div className="wizard-nav">
                 <span className="step-label">Step 1 of 3</span>
                 <button className="next-btn" onClick={() => setStep(1)}>Next →</button>
@@ -224,12 +456,10 @@ export default function Home() {
             </div>
           )}
 
-          {/* ── Step 1: Platforms & audience ── */}
           {step === 1 && (
             <div className="wizard-step" key={1}>
               <div className="wizard-heading">Where do you show up?</div>
               <div className="wizard-sub">Select your platforms and describe who you&apos;re trying to reach.</div>
-
               <div className="field">
                 <div className="field-label">Platforms</div>
                 <div className="platform-grid">
@@ -241,12 +471,10 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-
               <div className="field">
                 <div className="field-label">Target audience</div>
-                <textarea rows={2} placeholder="Who are you trying to reach? e.g. Institutional investors, DeFi developers, voters in Hawaii District 5..." value={brief.audience} onChange={e => update("audience", e.target.value)} />
+                <textarea rows={2} placeholder="Who are you trying to reach?" value={brief.audience} onChange={e => update("audience", e.target.value)} />
               </div>
-
               <div className="field">
                 <div className="field-label">Tone of voice</div>
                 <div className="tone-grid">
@@ -255,7 +483,6 @@ export default function Home() {
                   ))}
                 </div>
               </div>
-
               <div className="wizard-nav">
                 <button className="back-btn" onClick={() => setStep(0)}>← Back</button>
                 <span className="step-label">Step 2 of 3</span>
@@ -264,11 +491,10 @@ export default function Home() {
             </div>
           )}
 
-          {/* ── Step 2: Content situation ── */}
           {step === 2 && (
             <div className="wizard-step" key={2}>
               <div className="wizard-heading">What are we working with?</div>
-              <div className="wizard-sub">Starting fresh or building on existing content? Both are fine.</div>
+              <div className="wizard-sub">Existing content or starting fresh — both are fine. LinkedIn data unlocks richer analysis.</div>
 
               <div className="field">
                 <div className="field-label">Your situation</div>
@@ -277,18 +503,41 @@ export default function Home() {
                   <button className={`situation-btn ${brief.hasExistingContent ? "active" : ""}`} onClick={() => update("hasExistingContent", true)}>Have existing content</button>
                 </div>
                 {brief.hasExistingContent && (
-                  <textarea rows={4} placeholder="Paste your best existing posts, articles, or content here..." value={brief.existingContent} onChange={e => update("existingContent", e.target.value)} />
+                  <textarea rows={4} placeholder="Paste your best existing posts, articles, or content..." value={brief.existingContent} onChange={e => update("existingContent", e.target.value)} />
                 )}
+              </div>
+
+              {/* LinkedIn CSV upload */}
+              <div className="field">
+                <div className="field-label">LinkedIn data export <span className="field-optional">optional</span></div>
+                <div className="upload-zone" onClick={() => document.getElementById("li-upload").click()}>
+                  <div className="upload-icon">📊</div>
+                  <div className="upload-text">Upload LinkedIn CSV export</div>
+                  <div className="upload-hint">Shares.csv or analytics export — unlocks the Content Auditor and Analytics tab</div>
+                  <input id="li-upload" type="file" multiple accept=".csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleLinkedInUpload} />
+                </div>
+                {linkedInFiles.length > 0 && (
+                  <div className="upload-files">
+                    {linkedInFiles.map((f, i) => (
+                      <div key={f.filename + i} className="upload-file-chip">
+                        <span>📄 {f.filename} ({f.posts.length} posts)</span>
+                        <button onClick={() => removeLinkedInFile(f.filename)}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="upload-how">
+                  How to export: LinkedIn → Settings → Data Privacy → Get a copy of your data → Posts
+                </div>
               </div>
 
               <div className="field">
                 <div className="field-label">Biggest challenge</div>
-                <textarea rows={2} placeholder="e.g. I post inconsistently, my content gets ignored, I don't know how to stand out..." value={brief.challenge} onChange={e => update("challenge", e.target.value)} />
+                <textarea rows={2} placeholder="e.g. I post inconsistently, content gets ignored, don't know how to stand out..." value={brief.challenge} onChange={e => update("challenge", e.target.value)} />
               </div>
-
               <div className="field">
                 <div className="field-label">What makes you different?</div>
-                <textarea rows={2} placeholder="e.g. I've been in crypto since 2013, I have 20 years of institutional finance experience..." value={brief.differentiator} onChange={e => update("differentiator", e.target.value)} />
+                <textarea rows={2} placeholder="e.g. I've been in crypto since 2013, 20 years of institutional finance..." value={brief.differentiator} onChange={e => update("differentiator", e.target.value)} />
               </div>
 
               <div className="wizard-nav">
@@ -298,7 +547,6 @@ export default function Home() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     );
@@ -310,6 +558,15 @@ export default function Home() {
 
   const currentAgent = AGENTS.find(a => a.index === activeTab);
   const currentOutput = outputs[activeTab];
+  const currentChatHistory = chatHistories[activeTab] || [];
+  // Filter history to only user/assistant messages (skip the system setup messages)
+  const visibleChatMessages = currentChatHistory.filter((m, i) => {
+    if (i === 0 && m.role === "user" && m.content.includes("You are the")) return false;
+    if (i === 1 && m.role === "assistant" && m.content.includes("I'm ready to discuss")) return false;
+    return true;
+  });
+
+  const showAnalyticsTab = linkedInFiles.length > 0;
 
   return (
     <div className="app-wrap">
@@ -317,8 +574,6 @@ export default function Home() {
       {/* ── Header ── */}
       <header className="app-header">
         <div className="header-logo">⚡ Voltage Media</div>
-
-        {/* Brief summary pill */}
         <div className="brief-summary">
           <div className="brief-pill">
             {brief.name && <span className="brief-pill-name">{brief.name}</span>}
@@ -327,11 +582,8 @@ export default function Home() {
             {brief.industry && <><span className="brief-pill-dot">·</span><span>{brief.industry}</span></>}
             {brief.platforms.length > 0 && <><span className="brief-pill-dot">·</span><span>{brief.platforms.slice(0, 3).join(", ")}</span></>}
           </div>
-          <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(0); }}>
-            Edit brief
-          </button>
+          <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(0); }}>Edit brief</button>
         </div>
-
         <div className="header-actions">
           <button className="run-btn" onClick={runAll} disabled={running}>
             {running ? "Running..." : "↻ Re-run all"}
@@ -343,69 +595,121 @@ export default function Home() {
       <nav className="tab-bar">
         {visibleAgents.map(agent => {
           const status = outputs[agent.index]?.status;
+          const hasChat = (chatHistories[agent.index] || []).filter((m,i) => !(i<=1)).length > 0;
           return (
-            <button
-              key={agent.index}
-              className={`tab ${activeTab === agent.index ? "active" : ""}`}
-              onClick={() => setActiveTab(agent.index)}
-            >
+            <button key={agent.index} className={`tab ${activeTab === agent.index ? "active" : ""}`} onClick={() => setActiveTab(agent.index)}>
               {agent.icon} {agent.name}
-              {status && (
-                <span className={`tab-dot ${status}`} />
-              )}
+              {status && <span className={`tab-dot ${status}`} />}
+              {hasChat && !status && <span className="tab-chat-dot" title="Has chat history" />}
             </button>
           );
         })}
+        {showAnalyticsTab && (
+          <button className={`tab ${activeTab === ANALYTICS_TAB ? "active" : ""}`} onClick={() => setActiveTab(ANALYTICS_TAB)}>
+            📊 Analytics
+          </button>
+        )}
       </nav>
 
       {/* ── Content area ── */}
       <div className="content-area" key={activeTab}>
-        {!currentOutput ? (
-          <div className="empty-state">
-            <div className="empty-icon">{currentAgent?.icon}</div>
-            <div className="empty-title">Waiting to run</div>
-            <div className="empty-sub">Hit &quot;Re-run all&quot; or wait for the current run to reach this agent.</div>
-          </div>
-        ) : (
-          <div className="agent-output">
-            {/* Output header */}
-            <div className="output-meta">
-              <div className="output-agent-info">
-                <span className="output-icon">{currentAgent?.icon}</span>
-                <span className="output-name">{currentAgent?.name}</span>
-                <span className="output-model">{currentAgent?.model}</span>
-              </div>
-              <div className="output-actions">
-                {currentOutput.status === "streaming" && (
-                  <div className="status-badge streaming">
-                    <div className="spinner" /> Thinking
-                  </div>
-                )}
-                {currentOutput.status === "done" && (
-                  <>
-                    <div className="status-badge done">✓ Done</div>
-                    <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>↻ Re-run</button>
-                    <button className="copy-btn" onClick={() => copyAgent(activeTab)}>Copy</button>
-                  </>
-                )}
-                {currentOutput.status === "error" && (
-                  <>
-                    <div className="status-badge error">✗ Error</div>
-                    <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>↻ Retry</button>
-                  </>
-                )}
-              </div>
-            </div>
 
-            {/* Output text */}
-            <div className={`output-box ${activeTab === 5 ? "contrarian" : ""} ${currentOutput.status === "streaming" ? "streaming-cursor" : ""}`}>
-              {currentOutput.text || " "}
+        {/* Analytics tab */}
+        {activeTab === ANALYTICS_TAB ? renderAnalytics() : (
+
+          !currentOutput ? (
+            <div className="empty-state">
+              <div className="empty-icon">{currentAgent?.icon}</div>
+              <div className="empty-title">Waiting to run</div>
+              <div className="empty-sub">Hit &quot;Re-run all&quot; or wait for the current run to reach this agent.</div>
             </div>
-          </div>
+          ) : (
+            <div className="agent-output">
+
+              {/* Output header */}
+              <div className="output-meta">
+                <div className="output-agent-info">
+                  <span className="output-icon">{currentAgent?.icon}</span>
+                  <span className="output-name">{currentAgent?.name}</span>
+                  <span className="output-model">{currentAgent?.model}</span>
+                </div>
+                <div className="output-actions">
+                  {currentOutput.status === "streaming" && (
+                    <div className="status-badge streaming"><div className="spinner" /> Thinking</div>
+                  )}
+                  {currentOutput.status === "done" && (
+                    <>
+                      <div className="status-badge done">✓ Done</div>
+                      <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>↻ Re-run</button>
+                      <button className="copy-btn" onClick={() => copyAgent(activeTab)}>Copy</button>
+                    </>
+                  )}
+                  {currentOutput.status === "error" && (
+                    <>
+                      <div className="status-badge error">✗ Error</div>
+                      <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>↻ Retry</button>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Output text */}
+              <div className={`output-box ${activeTab === 5 ? "contrarian" : ""} ${currentOutput.status === "streaming" ? "streaming-cursor" : ""}`}>
+                {currentOutput.text || " "}
+              </div>
+
+              {/* ── Chat section — only when done ── */}
+              {currentOutput.status === "done" && (
+                <div className="chat-section">
+                  <div className="chat-section-label">
+                    <span className="chat-label-icon">💬</span>
+                    Ask {currentAgent?.name} a follow-up
+                  </div>
+
+                  {/* Chat messages */}
+                  {visibleChatMessages.length > 0 && (
+                    <div className="chat-messages">
+                      {visibleChatMessages.map((msg, i) => (
+                        <div key={i} className={`chat-msg ${msg.role}`}>
+                          <div className="chat-msg-label">{msg.role === "user" ? "You" : currentAgent?.name}</div>
+                          <div className="chat-msg-bubble">{msg.content}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Chat input */}
+                  <div className="chat-input-row">
+                    <textarea
+                      className="chat-input"
+                      rows={2}
+                      placeholder={`Ask ${currentAgent?.name} anything about their analysis...`}
+                      value={chatInputs[activeTab] || ""}
+                      onChange={e => setChatInputs(p => ({ ...p, [activeTab]: e.target.value }))}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          if (!chatStreaming[activeTab]) sendChat(activeTab);
+                        }
+                      }}
+                      disabled={chatStreaming[activeTab]}
+                    />
+                    <button
+                      className="chat-send-btn"
+                      onClick={() => sendChat(activeTab)}
+                      disabled={chatStreaming[activeTab] || !chatInputs[activeTab]?.trim()}
+                    >
+                      {chatStreaming[activeTab] ? "..." : "Send →"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )
         )}
       </div>
 
-      {/* Toast */}
       <div className={`toast ${toast.show ? "show" : ""}`} style={toast.error ? { background: "var(--red)" } : {}}>
         {toast.msg}
       </div>
