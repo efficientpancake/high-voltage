@@ -138,6 +138,32 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
   ];
 }
 
+// ─── Markdown renderer ─────────────────────────────────────────────────────────
+
+function parseInline(text, key) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) =>
+    part.startsWith("**") && part.endsWith("**")
+      ? <strong key={i}>{part.slice(2, -2)}</strong>
+      : part
+  );
+}
+
+function renderMarkdown(text) {
+  if (!text) return null;
+  return text.split(/\r?\n/).map((rawLine, i) => {
+    const line = rawLine.trimEnd();
+    const h3 = line.match(/^###\s+(.+)/);  if (h3) return <h3 key={i} className="md-h3">{parseInline(h3[1])}</h3>;
+    const h2 = line.match(/^##\s+(.+)/);   if (h2) return <h2 key={i} className="md-h2">{parseInline(h2[1])}</h2>;
+    const h1 = line.match(/^#\s+(.+)/);    if (h1) return <h1 key={i} className="md-h1">{parseInline(h1[1])}</h1>;
+    if (line.trim() === "---" || line.trim() === "***") return <hr key={i} className="md-hr" />;
+    if (/^[\s]*[-*+] /.test(line)) return <li key={i} className="md-li">{parseInline(line.replace(/^[\s]*[-*+] /, ""))}</li>;
+    if (/^\d+\. /.test(line))      return <li key={i} className="md-li md-oli">{parseInline(line.replace(/^\d+\. /, ""))}</li>;
+    if (line.trim() === "")        return <div key={i} className="md-spacer" />;
+    return <p key={i} className="md-p">{parseInline(line)}</p>;
+  });
+}
+
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -417,12 +443,14 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
   if (view === "wizard") {
     return (
       <div className="wizard-wrap">
-        <div className="wizard-logo">⚡ <span>Voltage Media</span></div>
+        <div className="wizard-logo">
+          <span className="wizard-logo-mark" />
+          Voltage Media
+        </div>
+
 
         <div className="wizard-progress">
-          {[0, 1, 2].map(i => (
-            <div key={i} className={`progress-step ${i < step ? "done" : i === step ? "active" : ""}`} />
-          ))}
+          <div className="wizard-progress-fill" style={{ width: `${((step + 1) / 3) * 100}%` }} />
         </div>
 
         <div className="wizard-card">
@@ -573,7 +601,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
       {/* ── Header ── */}
       <header className="app-header">
-        <div className="header-logo">⚡ Voltage Media</div>
+        <div className="header-logo"><span className="header-logo-dot" />Voltage Media</div>
         <div className="brief-summary">
           <div className="brief-pill">
             {brief.name && <span className="brief-pill-name">{brief.name}</span>}
@@ -655,7 +683,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
               {/* Output text */}
               <div className={`output-box ${activeTab === 5 ? "contrarian" : ""} ${currentOutput.status === "streaming" ? "streaming-cursor" : ""}`}>
-                {currentOutput.text || " "}
+                {renderMarkdown(currentOutput.text) || " "}
               </div>
 
               {/* ── Chat section — only when done ── */}
