@@ -475,7 +475,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               </div>
               <div className="field">
                 <div className="field-label">What do you want to achieve?</div>
-                <textarea rows={3} placeholder="e.g. Build a following as a blockchain founder, get speaking invitations, attract institutional investors..." value={brief.goal} onChange={e => update("goal", e.target.value)} />
+                <textarea rows={3} placeholder="e.g. Build an audience, get speaking invitations, attract new clients..." value={brief.goal} onChange={e => update("goal", e.target.value)} />
               </div>
               <div className="wizard-nav">
                 <span className="step-label">Step 1 of 3</span>
@@ -565,7 +565,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               </div>
               <div className="field">
                 <div className="field-label">What makes you different?</div>
-                <textarea rows={2} placeholder="e.g. I've been in crypto since 2013, 20 years of institutional finance..." value={brief.differentiator} onChange={e => update("differentiator", e.target.value)} />
+                <textarea rows={2} placeholder="e.g. 10 years in the industry, built a company from scratch, unique methodology..." value={brief.differentiator} onChange={e => update("differentiator", e.target.value)} />
               </div>
 
               <div className="wizard-nav">
