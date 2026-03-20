@@ -462,7 +462,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               <div className="field-row">
                 <div className="field">
                   <div className="field-label">Name or handle</div>
-                  <input type="text" placeholder="@sarah" value={brief.name} onChange={e => update("name", e.target.value)} />
+                  <input type="text" placeholder="@handle" value={brief.name} onChange={e => update("name", e.target.value)} />
                 </div>
                 <div className="field">
                   <div className="field-label">Role or title</div>
