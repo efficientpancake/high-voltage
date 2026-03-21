@@ -58,7 +58,7 @@ function findCol(headers, candidates) {
   return headers.find(h => candidates.some(c => h.toLowerCase().includes(c.toLowerCase())));
 }
 
-function parseLinkedInData(csvText, filename) {
+function parseSocialData(csvText, filename) {
   const { headers, rows } = parseCSV(csvText);
   if (!headers.length) return null;
 
@@ -89,25 +89,25 @@ function parseLinkedInData(csvText, filename) {
 
 // ─── Prompt builder ────────────────────────────────────────────────────────────
 
-function buildPrompts(brief, linkedInFiles) {
+function buildPrompts(brief, socialFiles) {
   const platformList = brief.platforms.length ? brief.platforms.join(", ") : "all major platforms";
   const existingBlock = brief.hasExistingContent && brief.existingContent
     ? `\n\nEXISTING CONTENT:\n${brief.existingContent}` : "";
 
-  // Add LinkedIn data to context if available
+  // Add social media data to context if available
   let linkedInBlock = "";
-  if (linkedInFiles.length > 0) {
-    const allPosts = linkedInFiles.flatMap(f => f.posts).slice(0, 50);
-    const hasMetrics = linkedInFiles.some(f => f.hasMetrics);
+  if (socialFiles.length > 0) {
+    const allPosts = socialFiles.flatMap(f => f.posts).slice(0, 50);
+    const hasMetrics = socialFiles.some(f => f.hasMetrics);
     if (hasMetrics) {
       const topPosts = [...allPosts]
         .filter(p => p.impressions)
         .sort((a, b) => (b.impressions || 0) - (a.impressions || 0))
         .slice(0, 10);
-      linkedInBlock = `\n\nLINKEDIN ANALYTICS DATA:\n` +
+      linkedInBlock = `\n\nSOCIAL MEDIA ANALYTICS DATA:\n` +
         topPosts.map(p => `- "${p.text?.slice(0, 120)}..." | Impressions: ${p.impressions} | Reactions: ${p.reactions} | Comments: ${p.comments} | Clicks: ${p.clicks}`).join("\n");
     } else {
-      linkedInBlock = `\n\nLINKEDIN POSTS (${allPosts.length} posts):\n` +
+      linkedInBlock = `\n\nSOCIAL MEDIA POSTS (${allPosts.length} posts):\n` +
         allPosts.slice(0, 20).map(p => `[${p.date}] ${p.text?.slice(0, 200)}`).join("\n\n");
     }
   }
@@ -126,7 +126,7 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
   return [
     `You are an expert social media brand strategist.\n\n${ctx}\n\nDeliver:\n1. Positioning statement (2–3 sentences)\n2. Tone of voice — how they should sound, language to use and avoid\n3. 3–5 content pillars — the core themes they should own\n4. Platform strategy — which to prioritise and why\n5. What to stop doing immediately\n\nBe specific. No generic advice.`,
 
-    `You are a sharp social media content analyst.\n\n${ctx}\n\nAudit their content${linkedInBlock ? " using the LinkedIn data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
+    `You are a sharp social media content analyst.\n\n${ctx}\n\nAudit their content${linkedInBlock ? " using the social data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
 
     `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
 
@@ -173,7 +173,7 @@ export default function Home() {
   const [outputs, setOutputs]         = useState({});
   const [activeTab, setActiveTab]     = useState(0);
   const [running, setRunning]         = useState(false);
-  const [linkedInFiles, setLinkedInFiles] = useState([]); // parsed LinkedIn CSV data
+  const [socialFiles, setSocialFiles] = useState([]); // parsed social media CSV data
   const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
   // Chat state per agent
@@ -191,18 +191,18 @@ export default function Home() {
       : [...prev.platforms, p],
   }));
 
-  // ─── LinkedIn upload ────────────────────────────────────────────────────────
+  // ─── Social media data upload ───────────────────────────────────────────────
 
-  async function handleLinkedInUpload(e) {
+  async function handleDataUpload(e) {
     const files = Array.from(e.target.files);
     const parsed = [];
     for (const file of files) {
       const text = await file.text();
-      const data = parseLinkedInData(text, file.name);
+      const data = parseSocialData(text, file.name);
       if (data && data.posts.length > 0) parsed.push(data);
     }
     if (parsed.length > 0) {
-      setLinkedInFiles(prev => {
+      setSocialFiles(prev => {
         const existing = new Set(prev.map(f => f.filename));
         return [...prev, ...parsed.filter(f => !existing.has(f.filename))];
       });
@@ -213,13 +213,13 @@ export default function Home() {
     e.target.value = "";
   }
 
-  function removeLinkedInFile(filename) {
-    setLinkedInFiles(prev => prev.filter(f => f.filename !== filename));
+  function removeDataFile(filename) {
+    setSocialFiles(prev => prev.filter(f => f.filename !== filename));
   }
 
   // ─── Visible agents ─────────────────────────────────────────────────────────
 
-  const visibleAgents = AGENTS.filter(a => !a.conditional || brief.hasExistingContent || linkedInFiles.length > 0);
+  const visibleAgents = AGENTS.filter(a => !a.conditional || brief.hasExistingContent || socialFiles.length > 0);
 
   // ─── Streaming agent output ─────────────────────────────────────────────────
 
@@ -332,7 +332,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
   async function runAll() {
     setRunning(true);
-    const prompts = buildPrompts(brief, linkedInFiles);
+    const prompts = buildPrompts(brief, socialFiles);
     await Promise.allSettled(
       visibleAgents.map(a => streamAgent(a.index, prompts[a.index]))
     );
@@ -340,7 +340,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
   }
 
   async function rerunAgent(agentIndex) {
-    const prompts = buildPrompts(brief, linkedInFiles);
+    const prompts = buildPrompts(brief, socialFiles);
     await streamAgent(agentIndex, prompts[agentIndex]);
   }
 
@@ -365,21 +365,21 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
     setTimeout(() => setToast(t => ({ ...t, show: false })), 2200);
   }
 
-  // ─── LinkedIn analytics summary ─────────────────────────────────────────────
+  // ─── Analytics summary ──────────────────────────────────────────────────────
 
   function renderAnalytics() {
-    const allPosts = linkedInFiles.flatMap(f => f.posts);
-    const hasMetrics = linkedInFiles.some(f => f.hasMetrics);
+    const allPosts = socialFiles.flatMap(f => f.posts);
+    const hasMetrics = socialFiles.some(f => f.hasMetrics);
     const totalPosts = allPosts.length;
 
-    if (!totalPosts) return <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-title">No LinkedIn data loaded</div><div className="empty-sub">Upload your LinkedIn CSV export in the brief to see analytics here.</div></div>;
+    if (!totalPosts) return <div className="empty-state"><div className="empty-icon">📊</div><div className="empty-title">No data loaded</div><div className="empty-sub">Upload a social media CSV export in the brief to see analytics here.</div></div>;
 
     if (!hasMetrics) {
       // Text-only analysis
       return (
         <div className="analytics-wrap">
-          <div className="analytics-heading">LinkedIn Posts — Content Analysis</div>
-          <div className="analytics-note">No metrics detected in this export. Showing content overview. For impressions and engagement data, export from your LinkedIn Analytics dashboard.</div>
+          <div className="analytics-heading">Posts — Content Analysis</div>
+          <div className="analytics-note">No metrics detected in this export. Showing content overview. For impressions and engagement data, try exporting from your platform&apos;s analytics dashboard.</div>
           <div className="stat-cards">
             <div className="stat-card"><div className="stat-num">{totalPosts}</div><div className="stat-label">Posts loaded</div></div>
             <div className="stat-card"><div className="stat-num">{Math.round(allPosts.reduce((n,p) => n + (p.text?.length || 0), 0) / totalPosts)}</div><div className="stat-label">Avg post length (chars)</div></div>
@@ -407,7 +407,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
     return (
       <div className="analytics-wrap">
-        <div className="analytics-heading">LinkedIn Analytics</div>
+        <div className="analytics-heading">Analytics</div>
         <div className="stat-cards">
           <div className="stat-card"><div className="stat-num">{totalPosts}</div><div className="stat-label">Total posts</div></div>
           <div className="stat-card"><div className="stat-num">{totalImpressions.toLocaleString()}</div><div className="stat-label">Total impressions</div></div>
@@ -522,7 +522,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
           {step === 2 && (
             <div className="wizard-step" key={2}>
               <div className="wizard-heading">What are we working with?</div>
-              <div className="wizard-sub">Existing content or starting fresh — both are fine. LinkedIn data unlocks richer analysis.</div>
+              <div className="wizard-sub">Existing content or starting fresh — both are fine. Uploading social data unlocks richer analysis.</div>
 
               <div className="field">
                 <div className="field-label">Your situation</div>
@@ -535,27 +535,27 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                 )}
               </div>
 
-              {/* LinkedIn CSV upload */}
+              {/* Social media data upload */}
               <div className="field">
-                <div className="field-label">LinkedIn data export <span className="field-optional">optional</span></div>
+                <div className="field-label">Social media data export <span className="field-optional">optional</span></div>
                 <div className="upload-zone" onClick={() => document.getElementById("li-upload").click()}>
                   <div className="upload-icon">📊</div>
-                  <div className="upload-text">Upload LinkedIn CSV export</div>
-                  <div className="upload-hint">Shares.csv or analytics export — unlocks the Content Auditor and Analytics tab</div>
-                  <input id="li-upload" type="file" multiple accept=".csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleLinkedInUpload} />
+                  <div className="upload-text">Upload a social media CSV export</div>
+                  <div className="upload-hint">Supports LinkedIn, Twitter/X, Instagram and others — unlocks the Content Auditor and Analytics tab</div>
+                  <input id="li-upload" type="file" multiple accept=".csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleDataUpload} />
                 </div>
-                {linkedInFiles.length > 0 && (
+                {socialFiles.length > 0 && (
                   <div className="upload-files">
-                    {linkedInFiles.map((f, i) => (
+                    {socialFiles.map((f, i) => (
                       <div key={f.filename + i} className="upload-file-chip">
                         <span>📄 {f.filename} ({f.posts.length} posts)</span>
-                        <button onClick={() => removeLinkedInFile(f.filename)}>×</button>
+                        <button onClick={() => removeDataFile(f.filename)}>×</button>
                       </div>
                     ))}
                   </div>
                 )}
                 <div className="upload-how">
-                  How to export: LinkedIn → Settings → Data Privacy → Get a copy of your data → Posts
+                  LinkedIn: Settings → Data Privacy → Get a copy of your data → Posts. Twitter/X: Settings → Your account → Download an archive of your data.
                 </div>
               </div>
 
@@ -594,7 +594,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
     return true;
   });
 
-  const showAnalyticsTab = linkedInFiles.length > 0;
+  const showAnalyticsTab = socialFiles.length > 0;
 
   return (
     <div className="app-wrap">
