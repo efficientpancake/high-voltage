@@ -130,7 +130,7 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
 
     `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
 
-    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite 3 complete, publish-ready posts:\n\nPOST 1: LinkedIn long-form (300–500 words)\nPOST 2: Twitter/X thread (6–8 tweets)\nPOST 3: Instagram caption with CTA\n\nFirst person. Authentic voice. Each distinct in angle.`,
+    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. Authentic voice. Each distinct in angle. Do not write posts for any platform not listed.`,
 
     `You are a content repurposing expert.\n\n${ctx}\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
 
