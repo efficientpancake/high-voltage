@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
 
@@ -167,19 +167,31 @@ function renderMarkdown(text) {
 // ─── Main component ────────────────────────────────────────────────────────────
 
 export default function Home() {
-  const [view, setView]               = useState("wizard");
+  function loadSaved(key, fallback) {
+    if (typeof window === "undefined") return fallback;
+    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
+  }
+
+  const [view, setView]               = useState(() => loadSaved("vm_view", "wizard"));
   const [step, setStep]               = useState(0);
-  const [brief, setBrief]             = useState(defaultBrief);
-  const [outputs, setOutputs]         = useState({});
-  const [activeTab, setActiveTab]     = useState(0);
+  const [brief, setBrief]             = useState(() => loadSaved("vm_brief", defaultBrief));
+  const [outputs, setOutputs]         = useState(() => loadSaved("vm_outputs", {}));
+  const [activeTab, setActiveTab]     = useState(() => loadSaved("vm_activeTab", 0));
   const [running, setRunning]         = useState(false);
-  const [socialFiles, setSocialFiles] = useState([]); // parsed social media CSV data
+  const [socialFiles, setSocialFiles] = useState([]); // parsed social media CSV data — not persisted (binary data)
   const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
   // Chat state per agent
-  const [chatHistories, setChatHistories] = useState({}); // { agentIndex: [{ role, content }] }
+  const [chatHistories, setChatHistories] = useState(() => loadSaved("vm_chats", {}));
   const [chatInputs, setChatInputs]       = useState({}); // { agentIndex: string }
   const [chatStreaming, setChatStreaming]  = useState({}); // { agentIndex: boolean }
+
+  // Persist state to localStorage on change
+  useEffect(() => { localStorage.setItem("vm_view", JSON.stringify(view)); }, [view]);
+  useEffect(() => { localStorage.setItem("vm_brief", JSON.stringify(brief)); }, [brief]);
+  useEffect(() => { localStorage.setItem("vm_outputs", JSON.stringify(outputs)); }, [outputs]);
+  useEffect(() => { localStorage.setItem("vm_activeTab", JSON.stringify(activeTab)); }, [activeTab]);
+  useEffect(() => { localStorage.setItem("vm_chats", JSON.stringify(chatHistories)); }, [chatHistories]);
 
   // ─── Brief helpers ──────────────────────────────────────────────────────────
 
@@ -672,6 +684,12 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
           <button className="run-btn" onClick={runAll} disabled={running}>
             {running ? "Running..." : "↻ Re-run all"}
           </button>
+          <button className="run-btn" style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)" }} onClick={() => {
+            if (confirm("Clear all outputs and start over?")) {
+              ["vm_view","vm_brief","vm_outputs","vm_activeTab","vm_chats"].forEach(k => localStorage.removeItem(k));
+              window.location.reload();
+            }
+          }}>Start over</button>
         </div>
       </header>
 
