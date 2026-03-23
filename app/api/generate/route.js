@@ -11,7 +11,7 @@ export async function POST(req) {
   // Chat always uses Sonnet for good conversation quality without Opus cost.
   const model = isChat
     ? "claude-sonnet-4-6"
-    : (agentIndex === 0 || agentIndex === 3 || agentIndex === 5)
+    : (agentIndex === 3 || agentIndex === 5)
       ? "claude-opus-4-6"
       : "claude-haiku-4-5-20251001";
 
