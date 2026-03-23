@@ -360,6 +360,62 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
     navigator.clipboard.writeText(text).then(() => showToast("Copied"));
   }
 
+  async function exportAgentPDF(index) {
+    const text = outputs[index]?.text;
+    if (!text) return;
+
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF();
+    const margin = 20;
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const maxWidth = pageWidth - 2 * margin;
+    let y = margin;
+
+    function checkPage(needed) {
+      if (y + (needed || 14) > pageHeight - margin) { doc.addPage(); y = margin; }
+    }
+
+    function addText(str, size, bold, r, g, b) {
+      doc.setFontSize(size || 10);
+      doc.setTextColor(r ?? 40, g ?? 40, b ?? 40);
+      doc.setFont(undefined, bold ? "bold" : "normal");
+      const lines = doc.splitTextToSize(String(str || ""), maxWidth);
+      checkPage(lines.length * (size || 10) * 0.45 + 4);
+      doc.text(lines, margin, y);
+      y += lines.length * (size || 10) * 0.45 + 4;
+    }
+
+    const agent = AGENTS.find(a => a.index === index);
+    const dateStr = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
+
+    // Header
+    addText("Voltage Media", 18, true, 20, 20, 20);
+    addText(agent.name, 13, false, 80, 80, 80);
+    addText(dateStr, 10, false, 150, 150, 150);
+    if (brief.name || brief.role) addText([brief.name, brief.role, brief.industry].filter(Boolean).join(" · "), 10, false, 120, 120, 120);
+    y += 4;
+    doc.setDrawColor(220, 220, 220);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 10;
+
+    // Content — strip markdown symbols for PDF
+    const clean = text
+      .replace(/^#{1,3}\s+/gm, "")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/^[-*+] /gm, "• ")
+      .replace(/\u2019/g, "'").replace(/\u2018/g, "'")
+      .replace(/\u201c/g, '"').replace(/\u201d/g, '"')
+      .replace(/\u2013/g, "-").replace(/\u2014/g, "--");
+
+    addText(clean, 10, false, 40, 40, 40);
+
+    const filename = `${agent.name.toLowerCase().replace(/\s+/g, "-")}-${dateStr.replace(/\s/g, "-")}.pdf`;
+    doc.save(filename);
+    showToast("PDF saved");
+  }
+
   function showToast(msg, error = false) {
     setToast({ msg, show: true, error });
     setTimeout(() => setToast(t => ({ ...t, show: false })), 2200);
@@ -670,6 +726,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                       <div className="status-badge done">✓ Done</div>
                       <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>↻ Re-run</button>
                       <button className="copy-btn" onClick={() => copyAgent(activeTab)}>Copy</button>
+                      <button className="copy-btn" onClick={() => exportAgentPDF(activeTab)}>PDF</button>
                     </>
                   )}
                   {currentOutput.status === "error" && (
