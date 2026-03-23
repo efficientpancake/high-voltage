@@ -15,7 +15,7 @@ export async function POST(req) {
       ? "claude-opus-4-6"
       : "claude-haiku-4-5-20251001";
 
-  const maxTokens = agentIndex === 5 ? 6000 : 4096;
+  const maxTokens = 8000;
 
   // Accept either a messages array (for chat) or a single prompt string
   const messageArray = messages || [{ role: "user", content: prompt }];
