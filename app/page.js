@@ -5,10 +5,10 @@ import { useState, useRef } from "react";
 // ─── Agent definitions ────────────────────────────────────────────────────────
 
 const AGENTS = [
-  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Opus",   conditional: false },
+  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Haiku",  conditional: false },
   { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Haiku",  conditional: true  },
   { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Haiku",  conditional: false },
-  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Haiku",  conditional: false },
+  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Opus",   conditional: false },
   { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Haiku",  conditional: true  },
   { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus",   conditional: false },
 ];
