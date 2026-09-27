@@ -1,4 +1,13 @@
 .next
 node_modules
 .env.local
+.env
+.DS_Store
+
+# Local Netlify folder
 .netlify
+
+# Private notes: discovery feedback quotes people, keep off the public repo
+Feedback/
+HIGH_VOLTAGE_DISCOVERY.md
+HIGH_VOLTAGE_DESIGN.md

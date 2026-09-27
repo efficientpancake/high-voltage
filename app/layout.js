@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Voltage Media",
+  title: "High Voltage",
   description: "AI-powered social media strategy",
 };
 

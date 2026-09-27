@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import Workspace from "./Workspace";
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
 
 const AGENTS = [
-  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Haiku",  conditional: false },
-  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Haiku",  conditional: true  },
-  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Haiku",  conditional: false },
-  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Opus",   conditional: false },
-  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Haiku",  conditional: true  },
-  { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus",   conditional: false },
+  { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Opus 5.5",  conditional: false },
+  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Sonnet 5",  conditional: true  },
+  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Sonnet 5",  conditional: false },
+  { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Opus 5.5",   conditional: false },
+  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Sonnet 5",  conditional: true  },
+  { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus 5.5",   conditional: false },
 ];
 
 const ANALYTICS_TAB = 99; // special tab index for LinkedIn analytics
@@ -130,7 +131,7 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
 
     `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
 
-    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. Authentic voice. Each distinct in angle. Do not write posts for any platform not listed.`,
+    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. If their existing posts are included, write in that voice. Each distinct in angle. Do not write posts for any platform not listed.`,
 
     `You are a content repurposing expert.\n\n${ctx}\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
 
@@ -166,32 +167,46 @@ function renderMarkdown(text) {
 
 // ─── Main component ────────────────────────────────────────────────────────────
 
-export default function Home() {
-  function loadSaved(key, fallback) {
-    if (typeof window === "undefined") return fallback;
-    try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; }
-  }
+export default function Page() {
+  return (
+    <Workspace>
+      {(project, onChange, onNewProject) => (
+        <Studio key={project.id} project={project} onChange={onChange} onNewProject={onNewProject} />
+      )}
+    </Workspace>
+  );
+}
 
-  const [view, setView]               = useState(() => loadSaved("vm_view", "wizard"));
+// An agent that was mid-stream when the page closed can't resume; mark it so the
+// Retry button shows instead of a spinner that never ends.
+function settleOutputs(outputs = {}) {
+  return Object.fromEntries(Object.entries(outputs).map(([k, o]) =>
+    [k, o?.status === "streaming" ? { ...o, status: "error", text: (o.text || "") + "\n\n(Interrupted. Hit Retry to run it again.)" } : o]));
+}
+
+function Studio({ project, onChange, onNewProject }) {
+  const [view, setView]               = useState(project.view || "wizard");
   const [step, setStep]               = useState(0);
-  const [brief, setBrief]             = useState(() => loadSaved("vm_brief", defaultBrief));
-  const [outputs, setOutputs]         = useState(() => loadSaved("vm_outputs", {}));
-  const [activeTab, setActiveTab]     = useState(() => loadSaved("vm_activeTab", 0));
+  const [brief, setBrief]             = useState({ ...defaultBrief, ...project.brief });
+  const [outputs, setOutputs]         = useState(() => settleOutputs(project.outputs));
+  const [activeTab, setActiveTab]     = useState(project.active_tab || 0);
   const [running, setRunning]         = useState(false);
   const [socialFiles, setSocialFiles] = useState([]); // parsed social media CSV data — not persisted (binary data)
   const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
   // Chat state per agent
-  const [chatHistories, setChatHistories] = useState(() => loadSaved("vm_chats", {}));
+  const [chatHistories, setChatHistories] = useState(project.chats || {});
   const [chatInputs, setChatInputs]       = useState({}); // { agentIndex: string }
   const [chatStreaming, setChatStreaming]  = useState({}); // { agentIndex: boolean }
 
-  // Persist state to localStorage on change
-  useEffect(() => { localStorage.setItem("vm_view", JSON.stringify(view)); }, [view]);
-  useEffect(() => { localStorage.setItem("vm_brief", JSON.stringify(brief)); }, [brief]);
-  useEffect(() => { localStorage.setItem("vm_outputs", JSON.stringify(outputs)); }, [outputs]);
-  useEffect(() => { localStorage.setItem("vm_activeTab", JSON.stringify(activeTab)); }, [activeTab]);
-  useEffect(() => { localStorage.setItem("vm_chats", JSON.stringify(chatHistories)); }, [chatHistories]);
+  // Report every change to the Workspace, which autosaves it to the cloud.
+  // Skip the first render: that's just the project we loaded.
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    onChange({ view, brief, outputs, active_tab: activeTab, chats: chatHistories });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, brief, outputs, activeTab, chatHistories]);
 
   // ─── Brief helpers ──────────────────────────────────────────────────────────
 
@@ -277,7 +292,7 @@ export default function Home() {
     // First message sets the agent's context (only if this is the first chat message)
     let history;
     if (prevHistory.length === 0) {
-      const systemMessage = `You are the ${agent.name} from Voltage Media. You just completed an analysis for this brand brief:
+      const systemMessage = `You are the ${agent.name} from High Voltage. You just completed an analysis for this brand brief:
 
 Name: ${brief.name || "Not specified"}, Role: ${brief.role || "Not specified"}, Industry: ${brief.industry || "Not specified"}
 
@@ -402,7 +417,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
     const dateStr = new Date().toLocaleDateString("en-GB", { year: "numeric", month: "long", day: "numeric" });
 
     // Header
-    addText("Voltage Media", 18, true, 20, 20, 20);
+    addText("High Voltage", 18, true, 20, 20, 20);
     addText(agent.name, 13, false, 80, 80, 80);
     addText(dateStr, 10, false, 150, 150, 150);
     if (brief.name || brief.role) addText([brief.name, brief.role, brief.industry].filter(Boolean).join(" · "), 10, false, 120, 120, 120);
@@ -513,7 +528,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
       <div className="wizard-wrap">
         <div className="wizard-logo">
           <span className="wizard-logo-mark" />
-          Voltage Media
+          High Voltage
         </div>
 
 
@@ -669,7 +684,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
       {/* ── Header ── */}
       <header className="app-header">
-        <div className="header-logo"><span className="header-logo-dot" />Voltage Media</div>
+        <div className="header-logo"><span className="header-logo-dot" />High Voltage</div>
         <div className="brief-summary">
           <div className="brief-pill">
             {brief.name && <span className="brief-pill-name">{brief.name}</span>}
@@ -684,12 +699,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
           <button className="run-btn" onClick={runAll} disabled={running}>
             {running ? "Running..." : "↻ Re-run all"}
           </button>
-          <button className="run-btn" style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)" }} onClick={() => {
-            if (confirm("Clear all outputs and start over?")) {
-              ["vm_view","vm_brief","vm_outputs","vm_activeTab","vm_chats"].forEach(k => localStorage.removeItem(k));
-              window.location.reload();
-            }
-          }}>Start over</button>
+          <button className="run-btn" style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)" }} onClick={onNewProject}>+ New project</button>
         </div>
       </header>
 
@@ -758,7 +768,9 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
               {/* Output text */}
               <div className={`output-box ${activeTab === 5 ? "contrarian" : ""} ${currentOutput.status === "streaming" ? "streaming-cursor" : ""}`}>
-                {renderMarkdown(currentOutput.text) || " "}
+                {currentOutput.status === "streaming" && !currentOutput.text
+                  ? <div className="thinking-note"><div className="spinner" /> Thinking through this one, one moment</div>
+                  : renderMarkdown(currentOutput.text) || " "}
               </div>
 
               {/* ── Chat section — only when done ── */}
@@ -775,7 +787,11 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                       {visibleChatMessages.map((msg, i) => (
                         <div key={i} className={`chat-msg ${msg.role}`}>
                           <div className="chat-msg-label">{msg.role === "user" ? "You" : currentAgent?.name}</div>
-                          <div className="chat-msg-bubble">{msg.content}</div>
+                          <div className="chat-msg-bubble">
+                            {msg.role === "assistant" && !msg.content && chatStreaming[activeTab]
+                              ? <span className="thinking-note"><span className="spinner" /> Thinking through this one, one moment</span>
+                              : msg.content}
+                          </div>
                         </div>
                       ))}
                     </div>
