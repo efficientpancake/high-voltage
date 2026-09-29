@@ -59,33 +59,114 @@ function findCol(headers, candidates) {
   return headers.find(h => candidates.some(c => h.toLowerCase().includes(c.toLowerCase())));
 }
 
-function parseSocialData(csvText, filename) {
-  const { headers, rows } = parseCSV(csvText);
-  if (!headers.length) return null;
+// "12,345" → 12345. Spreadsheet cells often arrive formatted with commas.
+function toNum(v) {
+  const n = parseInt(String(v ?? "").replace(/[^\d-]/g, ""), 10);
+  return Number.isNaN(n) ? 0 : n;
+}
 
-  // Detect file type from headers
+// Turn one table (headers + row objects) into posts. `requirePostCols` skips
+// tables with neither post text nor post links, e.g. a sheet of daily totals.
+function parseRows(headers, rows, filename, { requirePostCols = false } = {}) {
   const hasMetrics = headers.some(h => /impression|click|reaction|engagement/i.test(h));
   const hasPostText = headers.some(h => /commentary|sharecommentary|post|text|content/i.test(h));
 
-  const textCol       = findCol(headers, ["ShareCommentary", "commentary", "post", "text", "content", "description"]);
+  const textCol       = findCol(headers, ["ShareCommentary", "commentary", "text", "content", "description"]);
+  const urlCol        = findCol(headers, ["url", "link"]);
   const dateCol       = findCol(headers, ["Date", "date", "created", "published"]);
   const impressionCol = findCol(headers, ["Impressions", "impression", "views", "reach"]);
   const clickCol      = findCol(headers, ["Clicks", "click"]);
   const reactionCol   = findCol(headers, ["Reactions", "reaction", "likes", "like"]);
   const commentCol    = findCol(headers, ["Comments", "comment"]);
   const repostCol     = findCol(headers, ["Reposts", "repost", "shares", "reshares"]);
+  const engagementCol = findCol(headers, ["Engagements", "engagement"]);
+
+  if (requirePostCols && !textCol && !urlCol) return null;
+
+  // Without a named text column, fall back to the first long value that isn't a link.
+  const guessText = row => Object.values(row).find(v => v.length > 30 && !/^https?:\/\//i.test(v)) || "";
 
   const posts = rows.map(row => ({
-    date:        dateCol       ? row[dateCol]        : "",
-    text:        textCol       ? row[textCol]        : Object.values(row).find(v => v.length > 30) || "",
-    impressions: impressionCol ? (parseInt(row[impressionCol]) || 0) : null,
-    clicks:      clickCol      ? (parseInt(row[clickCol])      || 0) : null,
-    reactions:   reactionCol   ? (parseInt(row[reactionCol])   || 0) : null,
-    comments:    commentCol    ? (parseInt(row[commentCol])    || 0) : null,
-    reposts:     repostCol     ? (parseInt(row[repostCol])     || 0) : null,
-  })).filter(p => p.text || p.impressions);
+    date:        dateCol       ? row[dateCol]  : "",
+    text:        textCol       ? row[textCol]  : guessText(row),
+    url:         urlCol        ? row[urlCol]   : "",
+    impressions: impressionCol ? toNum(row[impressionCol]) : null,
+    clicks:      clickCol      ? toNum(row[clickCol])      : null,
+    reactions:   reactionCol   ? toNum(row[reactionCol])   : null,
+    comments:    commentCol    ? toNum(row[commentCol])    : null,
+    reposts:     repostCol     ? toNum(row[repostCol])     : null,
+    engagements: engagementCol ? toNum(row[engagementCol]) : null,
+  })).filter(p => p.text || p.url || p.impressions);
 
-  return { filename, headers, posts, hasMetrics, hasPostText };
+  return { filename, headers, posts, hasMetrics, hasPostText: posts.some(p => p.text) };
+}
+
+function parseSocialData(csvText, filename) {
+  const { headers, rows } = parseCSV(csvText);
+  if (!headers.length) return null;
+  return parseRows(headers, rows, filename);
+}
+
+// ─── Excel (.xlsx / .xls) ─────────────────────────────────────────────────────
+
+// Split a sheet (array of rows) into tables. The header row is the first row with
+// 2+ filled cells (LinkedIn puts a note above it). Tables sitting side by side,
+// separated by an empty column, become separate tables.
+function tablesFromGrid(grid) {
+  const cell = v => String(v ?? "").trim();
+  const headerIdx = grid.findIndex(r => r.filter(v => cell(v)).length >= 2);
+  if (headerIdx < 0) return [];
+  const headerRow = grid[headerIdx].map(cell);
+  const body = grid.slice(headerIdx + 1);
+
+  const runs = [];
+  let start = -1;
+  for (let i = 0; i <= headerRow.length; i++) {
+    if (i < headerRow.length && headerRow[i]) { if (start < 0) start = i; }
+    else if (start >= 0) { runs.push([start, i]); start = -1; }
+  }
+
+  const tables = runs.map(([from, to]) => {
+    const headers = headerRow.slice(from, to);
+    const rows = body
+      .map(r => Object.fromEntries(headers.map((h, j) => [h, cell(r[from + j])])))
+      .filter(r => Object.values(r).some(Boolean));
+    return { headers, rows };
+  });
+
+  // LinkedIn's "Top posts" sheet has two side-by-side lists (by engagements and by
+  // impressions), each keyed by post URL. Merge them into one row per post.
+  const urlOf = t => findCol(t.headers, ["url", "link"]);
+  if (tables.length > 1 && tables.every(urlOf)) {
+    const merged = new Map();
+    for (const t of tables) {
+      const u = urlOf(t);
+      for (const r of t.rows) if (r[u]) merged.set(r[u], { ...(merged.get(r[u]) || {}), ...r });
+    }
+    return [{ headers: [...new Set(tables.flatMap(t => t.headers))], rows: [...merged.values()] }];
+  }
+  return tables;
+}
+
+async function parseSpreadsheet(file) {
+  const XLSX = await import("xlsx"); // loaded only when someone uploads a spreadsheet
+  const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
+  const found = [];
+  for (const name of wb.SheetNames) {
+    const grid = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
+    for (const { headers, rows } of tablesFromGrid(grid)) {
+      const data = parseRows(headers, rows, file.name, { requirePostCols: true });
+      if (data?.posts.length) found.push(data);
+    }
+  }
+  if (!found.length) return null;
+  return {
+    filename: file.name,
+    headers: [...new Set(found.flatMap(d => d.headers))],
+    posts: found.flatMap(d => d.posts),
+    hasMetrics: found.some(d => d.hasMetrics),
+    hasPostText: found.some(d => d.hasPostText),
+  };
 }
 
 // ─── Prompt builder ────────────────────────────────────────────────────────────
@@ -100,13 +181,16 @@ function buildPrompts(brief, socialFiles) {
   if (socialFiles.length > 0) {
     const allPosts = socialFiles.flatMap(f => f.posts).slice(0, 50);
     const hasMetrics = socialFiles.some(f => f.hasMetrics);
+    const label = p => p.text ? `"${p.text.slice(0, 120)}..."` : `Post ${p.url || "(no link)"}`;
+    const metric = (name, v) => v != null ? ` | ${name}: ${v}` : "";
     if (hasMetrics) {
       const topPosts = [...allPosts]
         .filter(p => p.impressions)
         .sort((a, b) => (b.impressions || 0) - (a.impressions || 0))
         .slice(0, 10);
       linkedInBlock = `\n\nSOCIAL MEDIA ANALYTICS DATA:\n` +
-        topPosts.map(p => `- "${p.text?.slice(0, 120)}..." | Impressions: ${p.impressions} | Reactions: ${p.reactions} | Comments: ${p.comments} | Clicks: ${p.clicks}`).join("\n");
+        (allPosts.some(p => p.text) ? "" : "(This export has performance metrics and post links only. It does not include the text of the posts, so don't claim to have read them.)\n") +
+        topPosts.map(p => `- ${label(p)}${p.date ? ` | Date: ${p.date}` : ""}${metric("Impressions", p.impressions)}${metric("Engagements", p.engagements)}${metric("Reactions", p.reactions)}${metric("Comments", p.comments)}${metric("Clicks", p.clicks)}`).join("\n");
     } else {
       linkedInBlock = `\n\nSOCIAL MEDIA POSTS (${allPosts.length} posts):\n` +
         allPosts.slice(0, 20).map(p => `[${p.date}] ${p.text?.slice(0, 200)}`).join("\n\n");
@@ -224,8 +308,15 @@ function Studio({ project, onChange, onNewProject }) {
     const files = Array.from(e.target.files);
     const parsed = [];
     for (const file of files) {
-      const text = await file.text();
-      const data = parseSocialData(text, file.name);
+      let data = null;
+      try {
+        if (/\.xlsx?$/i.test(file.name)) {
+          data = await parseSpreadsheet(file);
+        } else {
+          const text = await file.text();
+          if (!text.includes("\u0000")) data = parseSocialData(text, file.name); // skip binary files
+        }
+      } catch { data = null; }
       if (data && data.posts.length > 0) parsed.push(data);
     }
     if (parsed.length > 0) {
@@ -233,9 +324,11 @@ function Studio({ project, onChange, onNewProject }) {
         const existing = new Set(prev.map(f => f.filename));
         return [...prev, ...parsed.filter(f => !existing.has(f.filename))];
       });
-      showToast(`${parsed.reduce((n, f) => n + f.posts.length, 0)} posts loaded`);
+      const n = parsed.reduce((n, f) => n + f.posts.length, 0);
+      const noText = parsed.every(f => !f.hasPostText);
+      showToast(noText ? `${n} posts loaded (metrics and links only, no post text in this export)` : `${n} posts loaded`);
     } else {
-      showToast("Could not parse CSV — check the file format", true);
+      showToast("Couldn't read that file. Upload a CSV or Excel export of your posts.", true);
     }
     e.target.value = "";
   }
@@ -508,10 +601,13 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                   <span>{p.impressions?.toLocaleString()} impressions</span>
                   {p.reactions != null && <span>{p.reactions} reactions</span>}
                   {p.comments != null && <span>{p.comments} comments</span>}
+                  {p.engagements != null && <span>{p.engagements} engagements</span>}
                 </div>
               </div>
               {p.date && <div className="post-date">{p.date}</div>}
-              <div className="post-text">{p.text?.slice(0, 200)}{p.text?.length > 200 ? "..." : ""}</div>
+              {p.text
+                ? <div className="post-text">{p.text.slice(0, 200)}{p.text.length > 200 ? "..." : ""}</div>
+                : p.url && <a className="post-text" href={p.url} target="_blank" rel="noreferrer">View post on LinkedIn</a>}
             </div>
           ))}
         </div>
@@ -623,7 +719,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                 <div className="field-label">Social media data export <span className="field-optional">optional</span></div>
                 <div className="upload-zone" onClick={() => document.getElementById("li-upload").click()}>
                   <div className="upload-icon">📊</div>
-                  <div className="upload-text">Upload a social media CSV export</div>
+                  <div className="upload-text">Upload a social media export (CSV or Excel)</div>
                   <div className="upload-hint">Supports LinkedIn, Twitter/X, Instagram and others — unlocks the Content Auditor and Analytics tab</div>
                   <input id="li-upload" type="file" multiple accept=".csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleDataUpload} />
                 </div>
