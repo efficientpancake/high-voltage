@@ -1008,3 +1008,15 @@ select option { background: var(--surface); }
   padding: 10px 12px;
   font-size: 14px;
 }
+
+/* Project files */
+.tab-dot.queued { background: var(--text-sub); }
+.upload-warning {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--red-dim);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}

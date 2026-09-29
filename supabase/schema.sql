@@ -9,6 +9,7 @@ create table if not exists public.projects (
   brief       jsonb not null default '{}'::jsonb,
   outputs     jsonb not null default '{}'::jsonb,
   chats       jsonb not null default '{}'::jsonb,
+  files       jsonb not null default '{}'::jsonb,  -- { docs: [...], social: [...] }
   active_tab  int  not null default 0,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()

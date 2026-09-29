@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import Workspace from "./Workspace";
+import { docxToText, pdfToText } from "../lib/extractText";
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ function parseRows(headers, rows, filename, { requirePostCols = false } = {}) {
     engagements: engagementCol ? toNum(row[engagementCol]) : null,
   })).filter(p => p.text || p.url || p.impressions);
 
-  return { filename, headers, posts, hasMetrics, hasPostText: posts.some(p => p.text) };
+  return { filename, headers, posts, hasMetrics, hasPostText: posts.some(p => p.text), isPostData: Boolean(textCol || urlCol || hasMetrics) };
 }
 
 function parseSocialData(csvText, filename) {
@@ -148,6 +149,14 @@ function tablesFromGrid(grid) {
   return tables;
 }
 
+async function spreadsheetToText(file) {
+  const XLSX = await import("xlsx");
+  const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
+  return wb.SheetNames.map(n => `--- Sheet: ${n} ---\n${XLSX.utils.sheet_to_csv(wb.Sheets[n])}`).join("\n\n");
+}
+
+const wordCount = text => (text.match(/\S+/g) || []).length;
+
 async function parseSpreadsheet(file) {
   const XLSX = await import("xlsx"); // loaded only when someone uploads a spreadsheet
   const wb = XLSX.read(await file.arrayBuffer(), { cellDates: true });
@@ -171,7 +180,7 @@ async function parseSpreadsheet(file) {
 
 // ─── Prompt builder ────────────────────────────────────────────────────────────
 
-function buildPrompts(brief, socialFiles) {
+function buildPrompts(brief, socialFiles, docs = []) {
   const platformList = brief.platforms.length ? brief.platforms.join(", ") : "all major platforms";
   const existingBlock = brief.hasExistingContent && brief.existingContent
     ? `\n\nEXISTING CONTENT:\n${brief.existingContent}` : "";
@@ -206,21 +215,55 @@ Target Audience: ${brief.audience || "Not specified"}
 Platforms: ${platformList}
 Tone of Voice: ${brief.tone}
 Biggest Challenge: ${brief.challenge || "Not specified"}
-What Makes Them Different: ${brief.differentiator || "Not specified"}${existingBlock}${linkedInBlock}`;
+What Makes Them Different: ${brief.differentiator || "Not specified"}${existingBlock}${linkedInBlock}${docsBlock(docs)}`;
 
-  return [
-    `You are an expert social media brand strategist.\n\n${ctx}\n\nDeliver:\n1. Positioning statement (2–3 sentences)\n2. Tone of voice — how they should sound, language to use and avoid\n3. 3–5 content pillars — the core themes they should own\n4. Platform strategy — which to prioritise and why\n5. What to stop doing immediately\n\nBe specific. No generic advice.`,
+  // `shared` is identical for every agent and chat, so it's cached once per model.
+  // Each task refers back to it instead of repeating it.
+  const tasks = [
+    `You are an expert social media brand strategist.\n\nDeliver:\n1. Positioning statement (2–3 sentences)\n2. Tone of voice — how they should sound, language to use and avoid\n3. 3–5 content pillars — the core themes they should own\n4. Platform strategy — which to prioritise and why\n5. What to stop doing immediately\n\nBe specific. No generic advice.`,
 
-    `You are a sharp social media content analyst.\n\n${ctx}\n\nAudit their content${linkedInBlock ? " using the social data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
+    `You are a sharp social media content analyst.\n\nAudit their content${linkedInBlock ? " using the social data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
 
-    `You are a creative social media strategist specialising in thought leadership.\n\n${ctx}\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
+    `You are a creative social media strategist specialising in thought leadership.\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
 
-    `You are an expert social media copywriter.\n\n${ctx}\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. If their existing posts are included, write in that voice. Each distinct in angle. Do not write posts for any platform not listed.`,
+    `You are an expert social media copywriter.\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. If their existing posts are included, write in that voice. Each distinct in angle. Do not write posts for any platform not listed.`,
 
-    `You are a content repurposing expert.\n\n${ctx}\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
+    `You are a content repurposing expert.\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
 
-    `You are a brutally honest social media critic.\n\n${ctx}\n\nTear this strategy apart:\n1. What is painfully generic\n2. Which ideas won't land and why\n3. Where they're being inauthentic\n4. What assumptions are wrong\n5. What their audience will actually ignore\n6. The single biggest mistake they're about to make\n7. What a truly distinctive version would look like\n\nRank from most fatal to least fatal.`,
+    `You are a brutally honest social media critic.\n\nTear apart this brand\'s strategy and everything your team produced:\n1. What is painfully generic\n2. Which ideas won't land and why\n3. Where they're being inauthentic\n4. What assumptions are wrong\n5. What their audience will actually ignore\n6. The single biggest mistake they're about to make\n7. What a truly distinctive version would look like\n\nRank from most fatal to least fatal.`,
   ];
+
+  return { shared: ctx, tasks };
+}
+
+// Uploaded text files, handed to every agent as background material.
+function docsBlock(docs) {
+  if (!docs.length) return "";
+  return "\n\nPROJECT FILES (background material the user uploaded for this project):\n" +
+    docs.map(d => `\n=== ${d.name} ===\n${d.text}`).join("\n");
+}
+
+// ─── Agent pipeline ──────────────────────────────────────────────────────────
+// Agents run in stages so later ones can read earlier ones' work. The first
+// stage also fills the prompt cache (one per model), so later agents read the
+// brief and files at a fraction of the price.
+const STAGES = [[0, 1], [2, 4], [3], [5]];
+const READS_FROM = { 0: [], 1: [], 2: [0, 1], 4: [0, 1], 3: [0, 1, 2], 5: [0, 1, 2, 3, 4] };
+const agentName = i => AGENTS.find(a => a.index === i)?.name;
+
+// The shared brief + files block, marked for caching. Kept for an hour so it
+// still hits the cache for later stages and follow-up chats.
+const cachedBlock = text => ({ type: "text", text, cache_control: { type: "ephemeral", ttl: "1h" } });
+
+function agentMessages({ shared, tasks }, agentIndex, teamOutputs) {
+  const team = READS_FROM[agentIndex]
+    .filter(i => teamOutputs[i])
+    .map(i => `## ${agentName(i)}\n${teamOutputs[i]}`)
+    .join("\n\n");
+  const task = tasks[agentIndex] + (team
+    ? `\n\nYOUR TEAM'S WORK SO FAR. Build on it and stay consistent with it. Don't repeat it:\n\n${team}`
+    : "");
+  return [{ role: "user", content: [cachedBlock(shared), { type: "text", text: task }] }];
 }
 
 // ─── Markdown renderer ─────────────────────────────────────────────────────────
@@ -264,7 +307,7 @@ export default function Page() {
 // An agent that was mid-stream when the page closed can't resume; mark it so the
 // Retry button shows instead of a spinner that never ends.
 function settleOutputs(outputs = {}) {
-  return Object.fromEntries(Object.entries(outputs).map(([k, o]) =>
+  return Object.fromEntries(Object.entries(outputs).filter(([, o]) => o?.status !== "queued").map(([k, o]) =>
     [k, o?.status === "streaming" ? { ...o, status: "error", text: (o.text || "") + "\n\n(Interrupted. Hit Retry to run it again.)" } : o]));
 }
 
@@ -275,7 +318,9 @@ function Studio({ project, onChange, onNewProject }) {
   const [outputs, setOutputs]         = useState(() => settleOutputs(project.outputs));
   const [activeTab, setActiveTab]     = useState(project.active_tab || 0);
   const [running, setRunning]         = useState(false);
-  const [socialFiles, setSocialFiles] = useState([]); // parsed social media CSV data — not persisted (binary data)
+  // Project files, saved with the project: parsed social exports + plain text docs.
+  const [socialFiles, setSocialFiles] = useState(project.files?.social || []);
+  const [docs, setDocs]               = useState(project.files?.docs || []); // [{ name, text, added_at }]
   const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
   // Chat state per agent
@@ -288,9 +333,9 @@ function Studio({ project, onChange, onNewProject }) {
   const firstRender = useRef(true);
   useEffect(() => {
     if (firstRender.current) { firstRender.current = false; return; }
-    onChange({ view, brief, outputs, active_tab: activeTab, chats: chatHistories });
+    onChange({ view, brief, outputs, active_tab: activeTab, chats: chatHistories, files: { docs, social: socialFiles } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, brief, outputs, activeTab, chatHistories]);
+  }, [view, brief, outputs, activeTab, chatHistories, docs, socialFiles]);
 
   // ─── Brief helpers ──────────────────────────────────────────────────────────
 
@@ -302,35 +347,57 @@ function Studio({ project, onChange, onNewProject }) {
       : [...prev.platforms, p],
   }));
 
-  // ─── Social media data upload ───────────────────────────────────────────────
+  // ─── Project files upload ───────────────────────────────────────────────────
+  // Text files become background docs. CSV/Excel files that look like social
+  // exports become post data (Auditor + Analytics); any other CSV/Excel is kept
+  // as a text doc so agents can still read it.
 
-  async function handleDataUpload(e) {
+  async function handleFileUpload(e) {
     const files = Array.from(e.target.files);
-    const parsed = [];
+    const newDocs = [], newSocial = [], failed = [], empty = [];
+    const asDoc = (name, text) => newDocs.push({ name, text, added_at: new Date().toISOString() });
+
     for (const file of files) {
-      let data = null;
       try {
         if (/\.xlsx?$/i.test(file.name)) {
-          data = await parseSpreadsheet(file);
-        } else {
+          const data = await parseSpreadsheet(file);
+          if (data?.posts.length) newSocial.push(data);
+          else asDoc(file.name, await spreadsheetToText(file));
+        } else if (/\.(docx|pdf)$/i.test(file.name)) {
+          const text = /\.pdf$/i.test(file.name) ? await pdfToText(file) : await docxToText(file);
+          if (text) asDoc(file.name, text);
+          else empty.push(file.name); // e.g. a scanned PDF: pages are images, no text to read
+        } else if (/\.(txt|md|markdown|csv)$/i.test(file.name)) {
           const text = await file.text();
-          if (!text.includes("\u0000")) data = parseSocialData(text, file.name); // skip binary files
+          if (text.includes("\u0000")) { failed.push(file.name); continue; } // binary, not really text
+          const data = /\.csv$/i.test(file.name) ? parseSocialData(text, file.name) : null;
+          if (data?.posts.length && data.isPostData) newSocial.push(data);
+          else asDoc(file.name, text);
+        } else {
+          failed.push(file.name);
         }
-      } catch { data = null; }
-      if (data && data.posts.length > 0) parsed.push(data);
+      } catch { failed.push(file.name); }
     }
-    if (parsed.length > 0) {
-      setSocialFiles(prev => {
-        const existing = new Set(prev.map(f => f.filename));
-        return [...prev, ...parsed.filter(f => !existing.has(f.filename))];
-      });
-      const n = parsed.reduce((n, f) => n + f.posts.length, 0);
-      const noText = parsed.every(f => !f.hasPostText);
-      showToast(noText ? `${n} posts loaded (metrics and links only, no post text in this export)` : `${n} posts loaded`);
-    } else {
-      showToast("Couldn't read that file. Upload a CSV or Excel export of your posts.", true);
+
+    // A re-uploaded file replaces the old copy with the same name.
+    if (newDocs.length) setDocs(prev => [...prev.filter(d => !newDocs.some(n => n.name === d.name)), ...newDocs]);
+    if (newSocial.length) setSocialFiles(prev => [...prev.filter(f => !newSocial.some(n => n.filename === f.filename)), ...newSocial]);
+
+    const parts = [];
+    if (newDocs.length) parts.push(`${newDocs.length} file${newDocs.length > 1 ? "s" : ""} added`);
+    if (newSocial.length) {
+      const n = newSocial.reduce((n, f) => n + f.posts.length, 0);
+      parts.push(`${n} posts loaded${newSocial.every(f => !f.hasPostText) ? " (metrics and links only, no post text)" : ""}`);
     }
+    if (empty.length) parts.push(`no readable text in ${empty.join(", ")} (scanned PDFs are images, so there are no words to pull out)`);
+    if (failed.length) parts.push(`couldn't read ${failed.join(", ")}. Use .txt, .md, .docx, .pdf, .csv or Excel`);
+    const nothingAdded = !newDocs.length && !newSocial.length;
+    showToast(parts.join(" · ") || "Nothing added", nothingAdded && (failed.length > 0 || empty.length > 0));
     e.target.value = "";
+  }
+
+  function removeDoc(name) {
+    setDocs(prev => prev.filter(d => d.name !== name));
   }
 
   function removeDataFile(filename) {
@@ -343,7 +410,9 @@ function Studio({ project, onChange, onNewProject }) {
 
   // ─── Streaming agent output ─────────────────────────────────────────────────
 
-  async function streamAgent(agentIndex, prompt) {
+  // Streams one agent's output into the UI and returns the finished text ("" on error).
+  async function streamAgent(agentIndex, messages) {
+    let full = "";
     setOutputs(p => ({ ...p, [agentIndex]: { status: "streaming", text: "" } }));
     // Reset chat when re-running
     setChatHistories(p => ({ ...p, [agentIndex]: [] }));
@@ -351,7 +420,7 @@ function Studio({ project, onChange, onNewProject }) {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, agentIndex }),
+        body: JSON.stringify({ messages, agentIndex }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
@@ -360,18 +429,30 @@ function Studio({ project, onChange, onNewProject }) {
         const { done, value } = await reader.read();
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
+        full += chunk;
         setOutputs(p => ({
           ...p,
           [agentIndex]: { status: "streaming", text: (p[agentIndex]?.text || "") + chunk },
         }));
       }
       setOutputs(p => ({ ...p, [agentIndex]: { ...p[agentIndex], status: "done" } }));
+      return full;
     } catch (err) {
       setOutputs(p => ({ ...p, [agentIndex]: { status: "error", text: "Error: " + err.message } }));
+      return "";
     }
   }
 
   // ─── Chat with agent ─────────────────────────────────────────────────────────
+
+  // The chat's first message gets the same cached brief + files block the agents
+  // use, so follow-ups know the full brief and reuse the cache.
+  function chatApiMessages(history) {
+    const { shared } = buildPrompts(brief, socialFiles, docs);
+    return history.map((m, i) => i === 0
+      ? { role: "user", content: [cachedBlock(shared), { type: "text", text: m.content }] }
+      : m);
+  }
 
   async function sendChat(agentIndex) {
     const userMsg = (chatInputs[agentIndex] || "").trim();
@@ -385,9 +466,7 @@ function Studio({ project, onChange, onNewProject }) {
     // First message sets the agent's context (only if this is the first chat message)
     let history;
     if (prevHistory.length === 0) {
-      const systemMessage = `You are the ${agent.name} from High Voltage. You just completed an analysis for this brand brief:
-
-Name: ${brief.name || "Not specified"}, Role: ${brief.role || "Not specified"}, Industry: ${brief.industry || "Not specified"}
+      const systemMessage = `You are the ${agent.name} from High Voltage. You just completed an analysis for the brand brief above.
 
 Your analysis was:
 ${agentOutput}
@@ -419,7 +498,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, agentIndex, isChat: true }),
+        body: JSON.stringify({ messages: chatApiMessages(history), agentIndex, isChat: true }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
@@ -452,16 +531,24 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
   async function runAll() {
     setRunning(true);
-    const prompts = buildPrompts(brief, socialFiles);
-    await Promise.allSettled(
-      visibleAgents.map(a => streamAgent(a.index, prompts[a.index]))
-    );
+    const prompts = buildPrompts(brief, socialFiles, docs);
+    const visible = visibleAgents.map(a => a.index);
+    // Everyone shows as queued until their stage starts.
+    setOutputs(Object.fromEntries(visible.map(i => [i, { status: "queued", text: "" }])));
+    const results = {};
+    for (const stage of STAGES) {
+      const ids = stage.filter(i => visible.includes(i));
+      await Promise.allSettled(ids.map(async i => {
+        results[i] = await streamAgent(i, agentMessages(prompts, i, results));
+      }));
+    }
     setRunning(false);
   }
 
   async function rerunAgent(agentIndex) {
-    const prompts = buildPrompts(brief, socialFiles);
-    await streamAgent(agentIndex, prompts[agentIndex]);
+    const teamOutputs = Object.fromEntries(
+      Object.entries(outputs).filter(([, o]) => o?.status === "done").map(([i, o]) => [i, o.text]));
+    await streamAgent(agentIndex, agentMessages(buildPrompts(brief, socialFiles, docs), agentIndex, teamOutputs));
   }
 
   function startApp() {
@@ -714,23 +801,34 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                 )}
               </div>
 
-              {/* Social media data upload */}
+              {/* Project files: every agent reads these */}
               <div className="field">
-                <div className="field-label">Social media data export <span className="field-optional">optional</span></div>
-                <div className="upload-zone" onClick={() => document.getElementById("li-upload").click()}>
-                  <div className="upload-icon">📊</div>
-                  <div className="upload-text">Upload a social media export (CSV or Excel)</div>
-                  <div className="upload-hint">Supports LinkedIn, Twitter/X, Instagram and others — unlocks the Content Auditor and Analytics tab</div>
-                  <input id="li-upload" type="file" multiple accept=".csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleDataUpload} />
+                <div className="field-label">Project files <span className="field-optional">optional</span></div>
+                <div className="upload-zone" onClick={() => document.getElementById("file-upload").click()}>
+                  <div className="upload-icon">📁</div>
+                  <div className="upload-text">Add files every agent can read</div>
+                  <div className="upload-hint">Documents (.txt, .md, .docx, .pdf) for background like brand notes or past posts. Only the words are read, not images. Social media exports (CSV or Excel) also unlock the Content Auditor and Analytics tab. Saved with this project.</div>
+                  <input id="file-upload" type="file" multiple accept=".txt,.md,.markdown,.docx,.pdf,.csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleFileUpload} />
                 </div>
-                {socialFiles.length > 0 && (
+                {(docs.length > 0 || socialFiles.length > 0) && (
                   <div className="upload-files">
-                    {socialFiles.map((f, i) => (
-                      <div key={f.filename + i} className="upload-file-chip">
-                        <span>📄 {f.filename} ({f.posts.length} posts)</span>
-                        <button onClick={() => removeDataFile(f.filename)}>×</button>
+                    {docs.map(d => (
+                      <div key={"doc-" + d.name} className="upload-file-chip">
+                        <span>📄 {d.name} ({wordCount(d.text).toLocaleString()} words)</span>
+                        <button onClick={() => removeDoc(d.name)} aria-label={`Remove ${d.name}`}>×</button>
                       </div>
                     ))}
+                    {socialFiles.map((f, i) => (
+                      <div key={"social-" + f.filename + i} className="upload-file-chip">
+                        <span>📊 {f.filename} ({f.posts.length} posts)</span>
+                        <button onClick={() => removeDataFile(f.filename)} aria-label={`Remove ${f.filename}`}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {docs.reduce((n, d) => n + wordCount(d.text), 0) > 75000 && (
+                  <div className="upload-warning">
+                    These files add up to about {(docs.reduce((n, d) => n + wordCount(d.text), 0)).toLocaleString()} words. Every agent reads all of them on every run, so runs will be slower and cost more.
                   </div>
                 )}
                 <div className="upload-how">
@@ -790,6 +888,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
             {brief.platforms.length > 0 && <><span className="brief-pill-dot">·</span><span>{brief.platforms.slice(0, 3).join(", ")}</span></>}
           </div>
           <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(0); }}>Edit brief</button>
+          <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(2); }}>Files ({docs.length + socialFiles.length})</button>
         </div>
         <div className="header-actions">
           <button className="run-btn" onClick={runAll} disabled={running}>
@@ -825,7 +924,15 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
         {/* Analytics tab */}
         {activeTab === ANALYTICS_TAB ? renderAnalytics() : (
 
-          !currentOutput ? (
+          currentOutput?.status === "queued" ? (
+            <div className="empty-state">
+              <div className="empty-icon">{currentAgent?.icon}</div>
+              <div className="empty-title">Waiting for teammates</div>
+              <div className="empty-sub">
+                Starts once {READS_FROM[activeTab].filter(i => visibleAgents.some(a => a.index === i)).map(agentName).join(", ")} finish, so it can build on their work.
+              </div>
+            </div>
+          ) : !currentOutput ? (
             <div className="empty-state">
               <div className="empty-icon">{currentAgent?.icon}</div>
               <div className="empty-title">Waiting to run</div>
