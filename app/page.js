@@ -321,6 +321,7 @@ function Studio({ project, onChange, onNewProject }) {
   // Project files, saved with the project: parsed social exports + plain text docs.
   const [socialFiles, setSocialFiles] = useState(project.files?.social || []);
   const [docs, setDocs]               = useState(project.files?.docs || []); // [{ name, text, added_at }]
+  const [filesOpen, setFilesOpen]     = useState(false); // Files panel on the results screen
   const [toast, setToast]             = useState({ msg: "", show: false, error: false });
 
   // Chat state per agent
@@ -702,6 +703,45 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
     );
   }
 
+  // Project files upload + list. Shown on step 3 of the brief and in the Files
+  // panel on the results screen, so files can be added without re-running.
+  const hasResults = Object.values(outputs).some(o => o?.status === "done");
+  const filesField = (
+    <div className="field">
+      <div className="field-label">Project files <span className="field-optional">optional</span></div>
+      <div className="upload-zone" onClick={() => document.getElementById("file-upload").click()}>
+        <div className="upload-icon">📁</div>
+        <div className="upload-text">Add files every agent can read</div>
+        <div className="upload-hint">Documents (.txt, .md, .docx, .pdf) for background like brand notes or past posts. Only the words are read, not images. Social media exports (CSV or Excel) also unlock the Content Auditor and Analytics tab. Saved with this project.</div>
+        <input id="file-upload" type="file" multiple accept=".txt,.md,.markdown,.docx,.pdf,.csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleFileUpload} />
+      </div>
+      {(docs.length > 0 || socialFiles.length > 0) && (
+        <div className="upload-files">
+          {docs.map(d => (
+            <div key={"doc-" + d.name} className="upload-file-chip">
+              <span>📄 {d.name} ({wordCount(d.text).toLocaleString()} words)</span>
+              <button onClick={() => removeDoc(d.name)} aria-label={`Remove ${d.name}`}>×</button>
+            </div>
+          ))}
+          {socialFiles.map((f, i) => (
+            <div key={"social-" + f.filename + i} className="upload-file-chip">
+              <span>📊 {f.filename} ({f.posts.length} posts)</span>
+              <button onClick={() => removeDataFile(f.filename)} aria-label={`Remove ${f.filename}`}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {docs.reduce((n, d) => n + wordCount(d.text), 0) > 75000 && (
+        <div className="upload-warning">
+          These files add up to about {(docs.reduce((n, d) => n + wordCount(d.text), 0)).toLocaleString()} words. Every agent reads all of them on every run, so runs will be slower and cost more.
+        </div>
+      )}
+      <div className="upload-how">
+        LinkedIn: Settings → Data Privacy → Get a copy of your data → Posts. Twitter/X: Settings → Your account → Download an archive of your data.
+      </div>
+    </div>
+  );
+
   // ════════════════════════════════════════════════════════════════════════
   //  WIZARD VIEW
   // ════════════════════════════════════════════════════════════════════════
@@ -745,7 +785,10 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               </div>
               <div className="wizard-nav">
                 <span className="step-label">Step 1 of 3</span>
-                <button className="next-btn" onClick={() => setStep(1)}>Next →</button>
+                <div className="wizard-nav-actions">
+                  {hasResults && <button className="back-btn" onClick={() => setView("app")}>Back to results</button>}
+                  <button className="next-btn" onClick={() => setStep(1)}>Next →</button>
+                </div>
               </div>
             </div>
           )}
@@ -780,7 +823,10 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               <div className="wizard-nav">
                 <button className="back-btn" onClick={() => setStep(0)}>← Back</button>
                 <span className="step-label">Step 2 of 3</span>
-                <button className="next-btn" onClick={() => setStep(2)}>Next →</button>
+                <div className="wizard-nav-actions">
+                  {hasResults && <button className="back-btn" onClick={() => setView("app")}>Back to results</button>}
+                  <button className="next-btn" onClick={() => setStep(2)}>Next →</button>
+                </div>
               </div>
             </div>
           )}
@@ -801,40 +847,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
                 )}
               </div>
 
-              {/* Project files: every agent reads these */}
-              <div className="field">
-                <div className="field-label">Project files <span className="field-optional">optional</span></div>
-                <div className="upload-zone" onClick={() => document.getElementById("file-upload").click()}>
-                  <div className="upload-icon">📁</div>
-                  <div className="upload-text">Add files every agent can read</div>
-                  <div className="upload-hint">Documents (.txt, .md, .docx, .pdf) for background like brand notes or past posts. Only the words are read, not images. Social media exports (CSV or Excel) also unlock the Content Auditor and Analytics tab. Saved with this project.</div>
-                  <input id="file-upload" type="file" multiple accept=".txt,.md,.markdown,.docx,.pdf,.csv,.xls,.xlsx" style={{ display: "none" }} onChange={handleFileUpload} />
-                </div>
-                {(docs.length > 0 || socialFiles.length > 0) && (
-                  <div className="upload-files">
-                    {docs.map(d => (
-                      <div key={"doc-" + d.name} className="upload-file-chip">
-                        <span>📄 {d.name} ({wordCount(d.text).toLocaleString()} words)</span>
-                        <button onClick={() => removeDoc(d.name)} aria-label={`Remove ${d.name}`}>×</button>
-                      </div>
-                    ))}
-                    {socialFiles.map((f, i) => (
-                      <div key={"social-" + f.filename + i} className="upload-file-chip">
-                        <span>📊 {f.filename} ({f.posts.length} posts)</span>
-                        <button onClick={() => removeDataFile(f.filename)} aria-label={`Remove ${f.filename}`}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {docs.reduce((n, d) => n + wordCount(d.text), 0) > 75000 && (
-                  <div className="upload-warning">
-                    These files add up to about {(docs.reduce((n, d) => n + wordCount(d.text), 0)).toLocaleString()} words. Every agent reads all of them on every run, so runs will be slower and cost more.
-                  </div>
-                )}
-                <div className="upload-how">
-                  LinkedIn: Settings → Data Privacy → Get a copy of your data → Posts. Twitter/X: Settings → Your account → Download an archive of your data.
-                </div>
-              </div>
+              {filesField}
 
               <div className="field">
                 <div className="field-label">Biggest challenge</div>
@@ -848,7 +861,14 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
               <div className="wizard-nav">
                 <button className="back-btn" onClick={() => setStep(1)}>← Back</button>
                 <span className="step-label">Step 3 of 3</span>
-                <button className="next-btn" onClick={startApp}>Generate strategy →</button>
+                {hasResults ? (
+                  <div className="wizard-nav-actions">
+                    <button className="back-btn" onClick={startApp}>Re-run all agents</button>
+                    <button className="next-btn" onClick={() => setView("app")}>Back to results →</button>
+                  </div>
+                ) : (
+                  <button className="next-btn" onClick={startApp}>Generate strategy →</button>
+                )}
               </div>
             </div>
           )}
@@ -888,7 +908,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
             {brief.platforms.length > 0 && <><span className="brief-pill-dot">·</span><span>{brief.platforms.slice(0, 3).join(", ")}</span></>}
           </div>
           <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(0); }}>Edit brief</button>
-          <button className="edit-brief-btn" onClick={() => { setView("wizard"); setStep(2); }}>Files ({docs.length + socialFiles.length})</button>
+          <button className="edit-brief-btn" onClick={() => setFilesOpen(true)}>Files ({docs.length + socialFiles.length})</button>
         </div>
         <div className="header-actions">
           <button className="run-btn" onClick={runAll} disabled={running}>
@@ -1031,6 +1051,21 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
           )
         )}
       </div>
+
+      {filesOpen && (
+        <div className="files-panel-backdrop" onClick={() => setFilesOpen(false)}>
+          <aside className="files-panel" onClick={e => e.stopPropagation()} aria-label="Project files">
+            <div className="files-panel-head">
+              <div className="files-panel-title">Project files</div>
+              <button className="files-panel-close" onClick={() => setFilesOpen(false)} aria-label="Close">×</button>
+            </div>
+            <div className="files-panel-note">
+              Adding or removing files doesn&apos;t change your results. Follow-up chats use them right away, and so does any agent you re-run.
+            </div>
+            {filesField}
+          </aside>
+        </div>
+      )}
 
       <div className={`toast ${toast.show ? "show" : ""}`} style={toast.error ? { background: "var(--red)" } : {}}>
         {toast.msg}

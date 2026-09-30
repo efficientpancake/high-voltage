@@ -1020,3 +1020,52 @@ select option { background: var(--surface); }
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* Brief: "Back to results" sits beside Next / Re-run */
+.wizard-nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Files panel: add files from the results screen without re-running */
+.files-panel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  justify-content: flex-end;
+}
+.files-panel {
+  width: 440px;
+  max-width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  padding: 20px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.files-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.files-panel-title { font-size: 17px; font-weight: 700; }
+.files-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.files-panel-close:hover { color: var(--text); }
+.files-panel-note {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
