@@ -13,6 +13,7 @@ const AGENTS = [
   { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Opus 5.5",   conditional: false },
   { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Sonnet 5",  conditional: true  },
   { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus 5.5",   conditional: false },
+  { index: 6, name: "Cold Reader",      icon: "👀", desc: "Would a stranger get it?",                         model: "Sonnet 5",   conditional: false },
 ];
 
 const ANALYTICS_TAB = 99; // special tab index for LinkedIn analytics
@@ -224,13 +225,15 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
 
     `You are a sharp social media content analyst.\n\nAudit their content${linkedInBlock ? " using the social data provided" : ""}:\n1. What's working and why\n2. What's not working — weak patterns, missed opportunities\n3. Gaps — missing topics, formats, angles\n4. Voice consistency — clear positioning or scattered?\n5. Top 3 highest-impact changes to make now\n\nBe direct. Don't soften criticism.`,
 
-    `You are a creative social media strategist specialising in thought leadership.\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nMix formats. Prioritise non-obvious angles specific to their niche.`,
+    `You are a creative social media strategist specialising in thought leadership.\n\nGenerate 10 specific post ideas. For each:\n- A compelling hook\n- The point: what the reader takes away, in one plain sentence. If you can't state it, drop the idea and replace it\n- Best platforms\n- Why it resonates with their audience\n- Difficulty: Easy / Medium / Challenging\n\nAn idea that only describes what happened, with no takeaway for the reader, doesn't count. Mix formats. Prioritise non-obvious angles specific to their niche.`,
 
     `You are an expert social media copywriter.\n\nWrite one complete, publish-ready post for EACH of the following platforms: ${platformList}.\n\nFor each post, label it clearly with the platform name, then write the post in the correct format and length for that platform. First person. If their existing posts are included, write in that voice. Each distinct in angle. Do not write posts for any platform not listed.`,
 
     `You are a content repurposing expert.\n\nRepurpose the existing content into:\n1. LinkedIn (150–300 words)\n2. Twitter/X thread (5–7 tweets)\n3. Instagram caption with hashtags\n4. TikTok script (60–90 sec)\n5. Facebook post\n6. Bluesky post\n\nAdapt tone and format for each platform.`,
 
     `You are a brutally honest social media critic.\n\nTear apart this brand\'s strategy and everything your team produced:\n1. What is painfully generic\n2. Which ideas won't land and why\n3. Where they're being inauthentic\n4. What assumptions are wrong\n5. What their audience will actually ignore\n6. The single biggest mistake they're about to make\n7. What a truly distinctive version would look like\n\nRank from most fatal to least fatal.`,
+
+    `You are a cold reader: someone scrolling social media who has never heard of this person or brand. You know nothing about them except the writing below. Don't guess at context you weren't given, and don't be polite about confusion.\n\nYou're busy and skeptical, and you give each post two seconds. Curiosity is not clarity: if a line only works as a puzzle, where you'd have to read on just to find out what it means, it is not clear. Score it 3 or lower. A 4 or 5 means you could say what the post is about AND why it matters to you after the first line alone.\n\nJudge the writing below. For the post ideas, judge ONLY each hook line and ignore any notes written under it. For the finished posts, judge the opening line first, then the whole post.\n\nFor each one, give:\n- What I think it's about: one plain sentence\n- Would I keep reading? Yes or No, and why\n- What confused me: any word, name or reference a stranger wouldn't get (or "Nothing")\n- Check A: Can I say exactly what the thing or idea is, without guessing between options? If I wrote a question mark, "could be", "maybe" or a list of possibilities anywhere above, the answer is No. Yes or No\n- Check B: Does the opening line name a problem or want that I, the reader, already have? Yes or No\n- Clarity: 1 to 5. If Check A or Check B is No, the score is 3 or lower, no exceptions. 5 means both are Yes and nothing confused me\n\nFinish with a short summary: which ones pass (4 or 5), and for anything scoring 3 or below, the single change that would make it clear to a stranger.`,
   ];
 
   return { shared: ctx, tasks };
@@ -239,7 +242,7 @@ What Makes Them Different: ${brief.differentiator || "Not specified"}${existingB
 // Uploaded text files, handed to every agent as background material.
 function docsBlock(docs) {
   if (!docs.length) return "";
-  return "\n\nPROJECT FILES (background material the user uploaded for this project):\n" +
+  return "\n\nPROJECT FILES (private background the user uploaded. The audience has NEVER read these. Use them to understand the person and brand, but never refer to their contents, names or terms as if the reader already knows them):\n" +
     docs.map(d => `\n=== ${d.name} ===\n${d.text}`).join("\n");
 }
 
@@ -247,8 +250,12 @@ function docsBlock(docs) {
 // Agents run in stages so later ones can read earlier ones' work. The first
 // stage also fills the prompt cache (one per model), so later agents read the
 // brief and files at a fraction of the price.
-const STAGES = [[0, 1], [2, 4], [3], [5]];
-const READS_FROM = { 0: [], 1: [], 2: [0, 1], 4: [0, 1], 3: [0, 1, 2], 5: [0, 1, 2, 3, 4] };
+const STAGES = [[0, 1], [2, 4], [3], [5, 6]];
+const READS_FROM = { 0: [], 1: [], 2: [0, 1], 4: [0, 1], 3: [0, 1, 2], 5: [0, 1, 2, 3, 4], 6: [2, 3] };
+
+// The Cold Reader must stay a stranger: it gets the ideas and posts only, never
+// the brief, the files or the team's notes. That's the whole point of the test.
+const COLD_READER = 6;
 const agentName = i => AGENTS.find(a => a.index === i)?.name;
 
 // The shared brief + files block, marked for caching. Kept for an hour so it
@@ -260,6 +267,10 @@ function agentMessages({ shared, tasks }, agentIndex, teamOutputs) {
     .filter(i => teamOutputs[i])
     .map(i => `## ${agentName(i)}\n${teamOutputs[i]}`)
     .join("\n\n");
+  if (agentIndex === COLD_READER) {
+    const text = tasks[agentIndex] + `\n\nTHE WRITING TO JUDGE:\n\n${team || "(Nothing yet. Run the Content Ideator and Post Writer first.)"}`;
+    return [{ role: "user", content: [{ type: "text", text }] }];
+  }
   const task = tasks[agentIndex] + (team
     ? `\n\nYOUR TEAM'S WORK SO FAR. Build on it and stay consistent with it. Don't repeat it:\n\n${team}`
     : "");
@@ -448,7 +459,8 @@ function Studio({ project, onChange, onNewProject }) {
 
   // The chat's first message gets the same cached brief + files block the agents
   // use, so follow-ups know the full brief and reuse the cache.
-  function chatApiMessages(history) {
+  function chatApiMessages(history, agentIndex) {
+    if (agentIndex === COLD_READER) return history; // stays a stranger in chat too
     const { shared } = buildPrompts(brief, socialFiles, docs);
     return history.map((m, i) => i === 0
       ? { role: "user", content: [cachedBlock(shared), { type: "text", text: m.content }] }
@@ -467,7 +479,13 @@ function Studio({ project, onChange, onNewProject }) {
     // First message sets the agent's context (only if this is the first chat message)
     let history;
     if (prevHistory.length === 0) {
-      const systemMessage = `You are the ${agent.name} from High Voltage. You just completed an analysis for the brand brief above.
+      const systemMessage = agentIndex === COLD_READER
+        ? `You are the Cold Reader: a stranger scrolling social media who knows nothing about this person or brand. You just gave this feedback on some posts:
+
+${agentOutput}
+
+The user wants to follow up. Stay a stranger: judge only what's on the page, and never pretend to know context you weren't given.`
+        : `You are the ${agent.name} from High Voltage. You just completed an analysis for the brand brief above.
 
 Your analysis was:
 ${agentOutput}
@@ -499,7 +517,7 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: chatApiMessages(history), agentIndex, isChat: true }),
+        body: JSON.stringify({ messages: chatApiMessages(history, agentIndex), agentIndex, isChat: true }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reader = res.body.getReader();
@@ -956,7 +974,8 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
             <div className="empty-state">
               <div className="empty-icon">{currentAgent?.icon}</div>
               <div className="empty-title">Waiting to run</div>
-              <div className="empty-sub">Hit &quot;Re-run all&quot; or wait for the current run to reach this agent.</div>
+              <div className="empty-sub">Hit &quot;Re-run all&quot;, or run just this agent using the team&apos;s current work.</div>
+              {!running && <button className="rerun-btn" onClick={() => rerunAgent(activeTab)}>Run {currentAgent?.name}</button>}
             </div>
           ) : (
             <div className="agent-output">

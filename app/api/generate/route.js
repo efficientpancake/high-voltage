@@ -31,7 +31,17 @@ HARD RULES (anti-AI-slop) for everything you write:
 - If the brief includes the person's own posts, mirror their voice closely:
   diction, sentence length, rhythm, capitalization habits, emoji use (or none).
   Sound like THEM, not like a generic account.
-- Never invent statistics, testimonials, or results.`;
+- Never invent statistics, testimonials, or results.
+
+STRANGER TEST (every post, hook and idea must pass it):
+- Write for a stranger: someone who has never heard of this person or brand and
+  sees the post cold in their feed.
+- No product names, project names, internal terms or jargon unless the same
+  sentence explains them in plain words.
+- Open with a problem or moment the reader already knows, in their own words.
+  The person's own story comes second, as the proof.
+- Every post needs one point a reader could repeat back in a single sentence.
+  If you can't state that point, don't write the post.`;
 
 export async function POST(req) {
   const { prompt, messages, agentIndex, isChat } = await req.json();
