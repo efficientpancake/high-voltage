@@ -1,8 +1,9 @@
 // This is a Next.js API route — it runs on the server, never in the browser.
 // It streams Claude's response back to the client in real-time.
 import Anthropic from "@anthropic-ai/sdk";
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { cookies } from "next/headers";
+import { getServerSupabase } from "../../../lib/supabase";
+import { keyForEmail } from "../../../lib/keys";
 
 // Let long responses keep streaming on Vercel (seconds) instead of timing out.
 export const maxDuration = 300;
@@ -45,6 +46,12 @@ STRANGER TEST (every post, hook and idea must pass it):
 
 export async function POST(req) {
   const { prompt, messages, agentIndex, isChat } = await req.json();
+
+  // Bill this person's usage to their own Anthropic key if they have one (see
+  // lib/keys.js). The email comes from the signed-in session on the server,
+  // never from anything the browser sends.
+  const { data: { user } } = await getServerSupabase(await cookies()).auth.getUser();
+  const anthropic = new Anthropic({ apiKey: keyForEmail(user?.email) });
 
   // Brand Strategist (0), Post Writer (3) and Contrarian (5) use Opus 5.5 for the
   // deepest thinking. Everything else, including follow-up chat, uses Sonnet 5.
