@@ -4,13 +4,15 @@ import Anthropic from "@anthropic-ai/sdk";
 import { cookies } from "next/headers";
 import { getServerSupabase } from "../../../lib/supabase";
 import { keyForEmail } from "../../../lib/keys";
+import { webSearchBlock } from "../../../lib/tavily";
+import { latestOpus } from "../../../lib/models";
 
 // Let long responses keep streaming on Vercel (seconds) instead of timing out.
 export const maxDuration = 300;
 
-// Writing rules applied to every agent and every chat reply (merged in from the
-// old standalone High Voltage generator). Brand-agnostic: works for any founder.
-const WRITING_RULES = `You work for High Voltage, a content team for founders and brands.
+// Writing rules applied to every agent and every chat reply, in Amp and Spark.
+// Brand-agnostic: works for any founder.
+const WRITING_RULES = `You work for Voltage Labs, a team that helps founders and brands research ideas and write content.
 
 HARD RULES (anti-AI-slop) for everything you write:
 - Write like a sharp human, not like a brand or a press release.
@@ -45,7 +47,7 @@ STRANGER TEST (every post, hook and idea must pass it):
   If you can't state that point, don't write the post.`;
 
 export async function POST(req) {
-  const { prompt, messages, agentIndex, isChat } = await req.json();
+  const { prompt, messages, agentIndex, isChat, app, webSearch } = await req.json();
 
   // Bill this person's usage to their own Anthropic key if they have one (see
   // lib/keys.js). The email comes from the signed-in session on the server,
@@ -53,10 +55,13 @@ export async function POST(req) {
   const { data: { user } } = await getServerSupabase(await cookies()).auth.getUser();
   const anthropic = new Anthropic({ apiKey: keyForEmail(user?.email) });
 
-  // Brand Strategist (0), Post Writer (3) and Contrarian (5) use Opus 5.5 for the
-  // deepest thinking. Everything else, including follow-up chat, uses Sonnet 5.
-  const model = !isChat && [0, 3, 5].includes(agentIndex)
-    ? "claude-opus-5-5"
+  // The deepest-thinking agents use the newest Opus (see lib/models.js);
+  // everything else, including follow-up chat, uses Sonnet 5.
+  //   Amp:   Brand Strategist (0), Post Writer (3), Contrarian (5)
+  //   Spark: Researcher (0), Steel Man (3), Contrarian (4)
+  const OPUS_AGENTS = app === "spark" ? [0, 3, 4] : [0, 3, 5];
+  const model = !isChat && OPUS_AGENTS.includes(agentIndex)
+    ? await latestOpus(anthropic)
     : "claude-sonnet-5";
 
   // 128K is the maximum output for both models, so responses never get cut off.
@@ -64,7 +69,19 @@ export async function POST(req) {
   const maxTokens = 128000;
 
   // Accept either a messages array (for chat) or a single prompt string
-  const messageArray = messages || [{ role: "user", content: prompt }];
+  let messageArray = messages || [{ role: "user", content: prompt }];
+
+  // Spark's Researcher gets live web search results, fetched here on the server
+  // so the search key never reaches the browser. They go at the end of the last
+  // message, after the cached brief, so the cache still works.
+  if (app === "spark" && typeof webSearch === "string" && webSearch.trim()) {
+    const results = await webSearchBlock(webSearch.trim());
+    messageArray = messageArray.map((m, i) => {
+      if (i !== messageArray.length - 1) return m;
+      const extra = { type: "text", text: results };
+      return { ...m, content: Array.isArray(m.content) ? [...m.content, extra] : [{ type: "text", text: m.content }, extra] };
+    });
+  }
 
   const encoder = new TextEncoder();
 

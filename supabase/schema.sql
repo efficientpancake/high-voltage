@@ -11,6 +11,8 @@ create table if not exists public.projects (
   chats       jsonb not null default '{}'::jsonb,
   files       jsonb not null default '{}'::jsonb,  -- { docs: [...], social: [...] }
   active_tab  int  not null default 0,
+  kind        text not null default 'amp',            -- 'spark' or 'amp'
+  linked_project_id uuid references public.projects(id) on delete set null,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );

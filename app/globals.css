@@ -1069,3 +1069,91 @@ select option { background: var(--surface); }
   line-height: 1.5;
   color: var(--text-muted);
 }
+
+/* ═══════════════════════════════════════════════
+   VOLTAGE LABS: home screen, Spark/Amp labels, Spark
+═══════════════════════════════════════════════ */
+
+.sidebar-home {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.kind-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.kind-badge.spark { background: rgba(250, 204, 21, 0.15); color: #FACC15; }
+.kind-badge.amp   { background: var(--blue-dim); color: #8FA8FF; }
+
+.home { width: 100%; max-width: 820px; }
+.home-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 28px;
+}
+.home-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.home-card-name { font-size: 22px; font-weight: 700; }
+.home-card-job { font-size: 15px; font-weight: 600; color: var(--text); }
+.home-card-desc { font-size: 14px; line-height: 1.6; color: var(--text-muted); flex: 1; }
+.home-card .next-btn { align-self: flex-start; margin-top: 8px; }
+.home-note { margin-top: 20px; font-size: 13px; color: var(--text-sub); }
+
+.spark-setup {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  justify-content: center;
+  padding: 40px 24px 80px;
+}
+.spark-link-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.spark-link-row input { flex: 1; min-width: 200px; }
+.spark-paste {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.spark-paste .back-btn { align-self: flex-start; }
+.spark-bridge {
+  margin-top: 20px;
+  padding: 16px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 14px;
+  color: var(--text-muted);
+}

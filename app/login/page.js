@@ -35,7 +35,7 @@ export default function Login() {
     <div className="wizard-wrap">
       <div className="wizard-logo">
         <span className="wizard-logo-mark" />
-        High Voltage
+        Voltage Labs
       </div>
       <div className="login-card">
         <div className="wizard-heading">Sign in</div>

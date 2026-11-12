@@ -1,7 +1,8 @@
 "use client";
 
-// Cloud workspace: signed-in user, sidebar of saved projects, and autosave to
-// Supabase. The Studio (the brief wizard + agents) renders inside it and reports
+// Cloud workspace: signed-in user, home screen, sidebar of saved projects, and
+// autosave to Supabase. Each project is a Spark project (research an idea) or an
+// Amp project (brand and posts). The open project renders inside and reports
 // changes through onChange; this component decides when to write them.
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getBrowserSupabase } from "../lib/supabase";
@@ -10,9 +11,15 @@ const SAVE_DEBOUNCE_MS = 1500;  // save 1.5s after the last change...
 const SAVE_MAX_WAIT_MS = 8000;  // ...but at least every 8s while agents stream
 const LEGACY_KEYS = ["vm_view", "vm_brief", "vm_outputs", "vm_activeTab", "vm_chats"];
 
+const LIST_COLUMNS = "id, title, updated_at, kind, linked_project_id";
+
+// Amp projects are named after the brand; Spark projects after their topic.
 function titleFor(brief) {
-  return brief?.name?.trim() || brief?.industry?.trim() || "Untitled project";
+  return brief?.name?.trim() || brief?.industry?.trim() || brief?.topic?.trim().slice(0, 60)
+    || brief?.label?.trim() || "Untitled project";
 }
+
+const KIND_LABEL = { spark: "Spark", amp: "Amp" };
 
 // Work saved in this browser before cloud saving existed. Imported once.
 function readLegacyProject() {
@@ -33,8 +40,9 @@ function readLegacyProject() {
 
 export default function Workspace({ children }) {
   const [user, setUser]           = useState(null);
-  const [projects, setProjects]   = useState([]);   // [{ id, title, updated_at }]
-  const [current, setCurrent]     = useState(null); // full row of the open project
+  const [projects, setProjects]   = useState([]);   // [{ id, title, updated_at, kind, linked_project_id }]
+  const [current, setCurrent]     = useState(null); // full row of the open project; null = home screen
+  const [loaded, setLoaded]       = useState(false);
   const [saveState, setSaveState] = useState("saved"); // saved | saving | error
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -97,12 +105,31 @@ export default function Workspace({ children }) {
 
   const createProject = useCallback(async (fields = {}) => {
     await flush();
-    const { data, error } = await getBrowserSupabase().from("projects").insert(fields).select("*").single();
+    const row = { ...fields, ...(fields.brief ? { title: titleFor(fields.brief) } : {}) };
+    const { data, error } = await getBrowserSupabase().from("projects").insert(row).select("*").single();
     if (error) { setLoadError(error.message); return null; }
-    setProjects(ps => [{ id: data.id, title: data.title, updated_at: data.updated_at }, ...ps]);
+    setProjects(ps => [pick(data), ...ps]);
     setCurrent(data);
     try { localStorage.setItem("hv_last_project", data.id); } catch {}
+    if (window.innerWidth < 900) setSidebarOpen(false);
     return data;
+  }, [flush]);
+
+  // The bridge: start a Spark or Amp project from the open one, and link the two
+  // so each can jump to the other.
+  const createLinked = useCallback(async (fields) => {
+    const from = current;
+    if (!from) return null;
+    const created = await createProject({ ...fields, linked_project_id: from.id });
+    if (!created) return null;
+    const { error } = await getBrowserSupabase().from("projects").update({ linked_project_id: created.id }).eq("id", from.id);
+    if (!error) setProjects(ps => ps.map(p => p.id === from.id ? { ...p, linked_project_id: created.id } : p));
+    return created;
+  }, [current, createProject]);
+
+  const goHome = useCallback(async () => {
+    await flush();
+    setCurrent(null);
   }, [flush]);
 
   async function deleteProject(id) {
@@ -112,10 +139,7 @@ export default function Workspace({ children }) {
     if (error) { setLoadError(error.message); return; }
     const rest = projects.filter(p => p.id !== id);
     setProjects(rest);
-    if (current?.id === id) {
-      if (rest.length) openProject(rest[0].id);
-      else createProject();
-    }
+    if (current?.id === id) setCurrent(null);
   }
 
   async function signOut() {
@@ -136,26 +160,20 @@ export default function Workspace({ children }) {
       setUser(user);
 
       const { data: list, error } = await getBrowserSupabase()
-        .from("projects").select("id, title, updated_at").order("updated_at", { ascending: false });
+        .from("projects").select(LIST_COLUMNS).order("updated_at", { ascending: false });
       if (error) { setLoadError(error.message); return; }
 
       let rows = list;
       const legacy = readLegacyProject();
       if (legacy) {
-        const { data: imported, error: importError } = await getBrowserSupabase().from("projects").insert(legacy).select("id, title, updated_at").single();
+        const { data: imported, error: importError } = await getBrowserSupabase().from("projects").insert(legacy).select(LIST_COLUMNS).single();
         if (!importError) {
           LEGACY_KEYS.forEach(k => localStorage.removeItem(k));
           rows = [imported, ...rows];
-          try { localStorage.setItem("hv_last_project", imported.id); } catch {}
         }
       }
       setProjects(rows);
-
-      let last = null;
-      try { last = localStorage.getItem("hv_last_project"); } catch {}
-      const target = rows.find(p => p.id === last) || rows[0];
-      if (target) openProject(target.id);
-      else createProject();
+      setLoaded(true); // opens on the home screen; projects are in the sidebar
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -173,16 +191,23 @@ export default function Workspace({ children }) {
       {sidebarOpen && (
         <aside className="sidebar">
           <div className="sidebar-top">
+            <button className="sidebar-home" onClick={goHome}><span className="header-logo-dot" />Voltage Labs</button>
+            <button className="sidebar-new" onClick={goHome}>+ New project</button>
             <div className="sidebar-title">Projects</div>
-            <button className="sidebar-new" onClick={() => createProject()}>+ New project</button>
           </div>
 
           <nav className="sidebar-list">
             {projects.map(p => (
               <div key={p.id} className={`sidebar-item ${current?.id === p.id ? "active" : ""}`}>
                 <button className="sidebar-item-open" onClick={() => current?.id !== p.id && openProject(p.id)}>
-                  <span className="sidebar-item-title">{p.title}</span>
-                  <span className="sidebar-item-date">{new Date(p.updated_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span>
+                  <span className="sidebar-item-title">
+                    <span className={`kind-badge ${p.kind || "amp"}`}>{KIND_LABEL[p.kind] || "Amp"}</span>
+                    {p.title}
+                  </span>
+                  <span className="sidebar-item-date">
+                    {new Date(p.updated_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                    {p.linked_project_id && projects.some(q => q.id === p.linked_project_id) ? " · linked" : ""}
+                  </span>
                 </button>
                 <button className="sidebar-item-delete" onClick={() => deleteProject(p.id)} aria-label={`Delete ${p.title}`}>×</button>
               </div>
@@ -200,9 +225,55 @@ export default function Workspace({ children }) {
       <main className="workspace-main">
         {loadError && <div className="login-error workspace-error">Couldn&apos;t reach the cloud: {loadError}</div>}
         {current
-          ? children(current, onChange, () => createProject())
-          : !loadError && <div className="workspace-loading">Loading your projects...</div>}
+          ? children(current, {
+              onChange,
+              goHome,
+              createLinked,
+              openProject,
+              linked: projects.find(p => p.id === current.linked_project_id) || null,
+            })
+          : loaded
+            ? <Home onStart={kind => createProject({ kind })} />
+            : !loadError && <div className="workspace-loading">Loading your projects...</div>}
       </main>
+    </div>
+  );
+}
+
+// Only the columns the sidebar needs.
+function pick(row) {
+  const { id, title, updated_at, kind, linked_project_id } = row;
+  return { id, title, updated_at, kind, linked_project_id };
+}
+
+// The home screen: pick what to work on. Past projects are in the sidebar.
+function Home({ onStart }) {
+  return (
+    <div className="wizard-wrap">
+      <div className="wizard-logo"><span className="wizard-logo-mark" />Voltage Labs</div>
+      <div className="home">
+        <div className="wizard-heading">What do you want to work on today?</div>
+        <div className="home-cards">
+          <div className="home-card">
+            <div className="home-card-name">Spark</div>
+            <div className="home-card-job">Research and sharpen an idea</div>
+            <p className="home-card-desc">
+              Bring a topic or a rough thesis, plus any sources you have. Get evidence, angles, the strongest
+              case for it, the strongest case against it, and an outline.
+            </p>
+            <button className="next-btn" onClick={() => onStart("spark")}>Start with an idea</button>
+          </div>
+          <div className="home-card">
+            <div className="home-card-name">Amp</div>
+            <div className="home-card-job">Build your voice and your posts</div>
+            <p className="home-card-desc">
+              Get your brand&apos;s positioning and tone of voice, post ideas, and posts written for each platform.
+            </p>
+            <button className="next-btn" onClick={() => onStart("amp")}>Start with your brand</button>
+          </div>
+        </div>
+        <div className="home-note">Your past projects are in the sidebar.</div>
+      </div>
     </div>
   );
 }
