@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import Workspace from "./Workspace";
 import Spark from "./Spark";
+import ShaderBackground from "./ShaderBackground";
 import { renderMarkdown } from "../lib/markdown";
 import { docxToText, pdfToText } from "../lib/extractText";
 
@@ -10,12 +11,12 @@ import { docxToText, pdfToText } from "../lib/extractText";
 
 const AGENTS = [
   { index: 0, name: "Brand Strategist", icon: "🧭", desc: "Positioning, tone of voice, content pillars",      model: "Opus (newest)", conditional: false },
-  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Sonnet 5",  conditional: true  },
-  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Sonnet 5",  conditional: false },
+  { index: 1, name: "Content Auditor",  icon: "🔍", desc: "What's working, what's not, what's missing",       model: "Sonnet (newest)", conditional: true  },
+  { index: 2, name: "Content Ideator",  icon: "💡", desc: "Post ideas, angles, and hooks",                    model: "Sonnet (newest)", conditional: false },
   { index: 3, name: "Post Writer",      icon: "✍️",  desc: "Platform-specific posts ready to publish",        model: "Opus (newest)", conditional: false },
-  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Sonnet 5",  conditional: true  },
+  { index: 4, name: "Repurposer",       icon: "🔄", desc: "One piece across every platform",                  model: "Sonnet (newest)", conditional: true  },
   { index: 5, name: "Contrarian",       icon: "⚔️",  desc: "What won't work and why",                         model: "Opus (newest)", conditional: false },
-  { index: 6, name: "Cold Reader",      icon: "👀", desc: "Would a stranger get it?",                         model: "Sonnet 5",   conditional: false },
+  { index: 6, name: "Cold Reader",      icon: "👀", desc: "Would a stranger get it?",                         model: "Sonnet (newest)", conditional: false },
 ];
 
 const ANALYTICS_TAB = 99; // special tab index for LinkedIn analytics
@@ -761,7 +762,8 @@ The user wants to follow up on your analysis. Stay in character as ${agent.name}
 
   if (view === "wizard") {
     return (
-      <div className="wizard-wrap">
+      <div className="wizard-wrap on-shader">
+        <ShaderBackground />
         <div className="wizard-logo">
           <span className="wizard-logo-mark" />
           Voltage Labs · Amp

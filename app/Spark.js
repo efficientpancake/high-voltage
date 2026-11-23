@@ -7,16 +7,17 @@
 // framing. "Turn into posts" hands the outline to a linked Amp project.
 import { useState, useRef, useEffect } from "react";
 import { renderMarkdown } from "../lib/markdown";
+import ShaderBackground from "./ShaderBackground";
 import { docxToText, pdfToText } from "../lib/extractText";
 
 const AGENTS = [
   { index: 0, name: "Researcher",      icon: "🔍", desc: "Evidence, data and quotes, from your sources and the live web", model: "Opus (newest)" },
-  { index: 1, name: "Angle Generator", icon: "🎯", desc: "Fresh framings and non-obvious takes",                         model: "Sonnet 5" },
-  { index: 2, name: "Trend Spotter",   icon: "📡", desc: "What's emerging, overhyped and ignored",                       model: "Sonnet 5" },
+  { index: 1, name: "Angle Generator", icon: "🎯", desc: "Fresh framings and non-obvious takes",                         model: "Sonnet (newest)" },
+  { index: 2, name: "Trend Spotter",   icon: "📡", desc: "What's emerging, overhyped and ignored",                       model: "Sonnet (newest)" },
   { index: 3, name: "Steel Man",       icon: "🛡️", desc: "The strongest case for your idea",                             model: "Opus (newest)" },
   { index: 4, name: "Contrarian",      icon: "⚔️", desc: "The strongest case against it",                                model: "Opus (newest)" },
-  { index: 5, name: "Outline Builder", icon: "📐", desc: "An outline built to survive the Contrarian",                   model: "Sonnet 5" },
-  { index: 6, name: "Cold Reader",     icon: "👀", desc: "Would a stranger get the headline and the hook?",              model: "Sonnet 5" },
+  { index: 5, name: "Outline Builder", icon: "📐", desc: "An outline built to survive the Contrarian",                   model: "Sonnet (newest)" },
+  { index: 6, name: "Cold Reader",     icon: "👀", desc: "Would a stranger get the headline and the hook?",              model: "Sonnet (newest)" },
 ];
 const agentName = i => AGENTS.find(a => a.index === i)?.name;
 
@@ -392,7 +393,8 @@ export default function Spark({ project, onChange, goHome, createLinked, openPro
       {header}
 
       {view === "setup" ? (
-        <div className="spark-setup">
+        <div className="spark-setup on-shader">
+          <ShaderBackground />
           <div className="wizard-card">
             <div className="wizard-heading">What idea are we sharpening?</div>
             <div className="wizard-sub">A topic, a question or a rough thesis. The more opinionated, the better the Steel Man and the Contrarian can test it.</div>

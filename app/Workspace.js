@@ -6,6 +6,7 @@
 // changes through onChange; this component decides when to write them.
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getBrowserSupabase } from "../lib/supabase";
+import ShaderBackground from "./ShaderBackground";
 
 const SAVE_DEBOUNCE_MS = 1500;  // save 1.5s after the last change...
 const SAVE_MAX_WAIT_MS = 8000;  // ...but at least every 8s while agents stream
@@ -249,7 +250,8 @@ function pick(row) {
 // The home screen: pick what to work on. Past projects are in the sidebar.
 function Home({ onStart }) {
   return (
-    <div className="wizard-wrap">
+    <div className="wizard-wrap on-shader">
+      <ShaderBackground />
       <div className="wizard-logo"><span className="wizard-logo-mark" />Voltage Labs</div>
       <div className="home">
         <div className="wizard-heading">What do you want to work on today?</div>

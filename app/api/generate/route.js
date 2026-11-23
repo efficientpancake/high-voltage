@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { getServerSupabase } from "../../../lib/supabase";
 import { keyForEmail } from "../../../lib/keys";
 import { webSearchBlock } from "../../../lib/tavily";
-import { latestOpus } from "../../../lib/models";
+import { latestModel } from "../../../lib/models";
 
 // Let long responses keep streaming on Vercel (seconds) instead of timing out.
 export const maxDuration = 300;
@@ -55,14 +55,12 @@ export async function POST(req) {
   const { data: { user } } = await getServerSupabase(await cookies()).auth.getUser();
   const anthropic = new Anthropic({ apiKey: keyForEmail(user?.email) });
 
-  // The deepest-thinking agents use the newest Opus (see lib/models.js);
-  // everything else, including follow-up chat, uses Sonnet 5.
+  // The deepest-thinking agents use the newest Opus; everything else, including
+  // follow-up chat, uses the newest Sonnet (see lib/models.js).
   //   Amp:   Brand Strategist (0), Post Writer (3), Contrarian (5)
   //   Spark: Researcher (0), Steel Man (3), Contrarian (4)
   const OPUS_AGENTS = app === "spark" ? [0, 3, 4] : [0, 3, 5];
-  const model = !isChat && OPUS_AGENTS.includes(agentIndex)
-    ? await latestOpus(anthropic)
-    : "claude-sonnet-5";
+  const model = await latestModel(anthropic, !isChat && OPUS_AGENTS.includes(agentIndex) ? "opus" : "sonnet");
 
   // 128K is the maximum output for both models, so responses never get cut off.
   // You're only billed for tokens actually generated, not this ceiling.

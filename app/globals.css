@@ -986,6 +986,36 @@ select option { background: var(--surface); }
   gap: 16px;
 }
 .login-card form { display: flex; flex-direction: column; gap: 16px; }
+
+/* Animated background (ShaderBackground.js) */
+.shader-bg {
+  position: fixed; /* left/top/size set in ShaderBackground.js */
+  left: 0;
+  top: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.on-shader { position: relative; }
+.on-shader > :not(.shader-bg) { position: relative; z-index: 1; }
+/* Frosted-glass panels: the aurora shows through, blurred so text stays easy to read */
+.on-shader .login-card,
+.on-shader .wizard-card,
+.on-shader .home {
+  background: rgba(22,24,48,0.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  border: 1px solid rgba(120,130,200,0.25);
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+.on-shader .home-card { background: rgba(30,32,64,0.55); }
+.on-shader .login-card input[type="email"] { background: rgba(15,16,35,0.6); }
+.on-shader .wizard-logo {
+  background: rgba(15,16,35,0.85);
+  padding: 8px 14px;
+  border-radius: 999px;
+}
 .login-card input[type="email"] {
   width: 100%;
   background: var(--surface);

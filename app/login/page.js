@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { getBrowserSupabase, supabaseConfigured } from "../../lib/supabase";
+import ShaderBackground from "../ShaderBackground";
 
 export default function Login() {
   const [email, setEmail]   = useState("");
@@ -32,7 +33,8 @@ export default function Login() {
   }
 
   return (
-    <div className="wizard-wrap">
+    <div className="wizard-wrap on-shader">
+      <ShaderBackground />
       <div className="wizard-logo">
         <span className="wizard-logo-mark" />
         Voltage Labs
