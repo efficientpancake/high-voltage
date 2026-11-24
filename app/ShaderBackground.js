@@ -9,9 +9,11 @@
 // Changes: recolored from green/magenta to the Voltage Labs blues and violets,
 // React wrapper, fills its own section (not always the whole window), lower
 // resolution on phones, pauses when the tab is hidden, one still frame for
-// reduced motion.
+// reduced motion. Also plays "Voltage Arc" (same library and license, see
+// radiantShaders.js) inside the homepage hero box.
 
 import { useEffect, useRef } from "react";
+import { voltageArc } from "./radiantShaders";
 
 const VERT = `attribute vec2 a_pos;
 void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }`;
@@ -318,10 +320,39 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-const SPEED = 0.5;
-const INTENSITY = 1.0;
+// Recolors any shader into the Voltage Labs palette by brightness: darkest
+// parts become the app background navy, then blue (#4361EE), then violet,
+// and the brightest highlights a pale lavender. Added as the last step of each
+// Radiant shader below, so their shapes and motion are unchanged.
+const BRAND_TONE = `
+vec3 vlBrandTone(vec3 c) {
+  float l = clamp(dot(c, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
+  vec3 navy   = vec3(0.035, 0.035, 0.09);
+  vec3 blue   = vec3(0.26, 0.38, 0.93);
+  vec3 violet = vec3(0.55, 0.30, 0.95);
+  vec3 pale   = vec3(0.86, 0.87, 1.0);
+  vec3 col = mix(navy, blue, smoothstep(0.0, 0.35, l));
+  col = mix(col, violet, smoothstep(0.35, 0.7, l));
+  col = mix(col, pale, smoothstep(0.7, 1.0, l));
+  return col;
+}
+`;
+function brand(frag) {
+  return frag
+    .replace("void main()", BRAND_TONE + "\nvoid main()")
+    .replace(/(gl_FragColor = [^;]+;)/, "$1\n  gl_FragColor.rgb = vlBrandTone(gl_FragColor.rgb);");
+}
 
-export default function ShaderBackground() {
+// Every shader here gets u_time, u_res and u_mouse; these are its other settings.
+const SHADERS = {
+  aurora:     { frag: FRAG, uniforms: { u_auroraSpeed: 0.5, u_auroraIntensity: 1.0 } },
+  voltageArc: { frag: brand(voltageArc), uniforms: { u_arcIntensity: 1.0, u_crackleSpeed: 0.5 } },
+};
+
+// `name`: which shader (aurora unless set). `contained`: fill the parent box
+// only (e.g. one panel of the homepage) instead of the whole window or
+// scrolling area behind the page.
+export default function ShaderBackground({ name = "aurora", contained = false }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -340,7 +371,8 @@ export default function ShaderBackground() {
     }
     const prog = gl.createProgram();
     gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+    const shader = SHADERS[name];
+    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, shader.frag));
     gl.linkProgram(prog);
     gl.useProgram(prog);
 
@@ -353,16 +385,14 @@ export default function ShaderBackground() {
 
     const uTime = gl.getUniformLocation(prog, "u_time");
     const uRes = gl.getUniformLocation(prog, "u_res");
-    const uSpeed = gl.getUniformLocation(prog, "u_auroraSpeed");
-    const uIntensity = gl.getUniformLocation(prog, "u_auroraIntensity");
     const uMouse = gl.getUniformLocation(prog, "u_mouse");
-    gl.uniform1f(uSpeed, SPEED);
-    gl.uniform1f(uIntensity, INTENSITY);
+    for (const [k, v] of Object.entries(shader.uniforms)) gl.uniform1f(gl.getUniformLocation(prog, k), v);
 
     // Cover the nearest scrolling box (e.g. the main area next to the sidebar),
     // or the whole window if there isn't one. Fixed, so it stays put on scroll.
     let scroller = null;
-    for (let el = canvas.parentElement; el && el !== document.body; el = el.parentElement) {
+    const box = contained ? canvas.parentElement : null;
+    for (let el = box ? document.body : canvas.parentElement; el && el !== document.body; el = el.parentElement) {
       if (/(auto|scroll)/.test(getComputedStyle(el).overflowY)) { scroller = el; break; }
     }
 
@@ -371,14 +401,17 @@ export default function ShaderBackground() {
     const mouse = { x: -1, y: -1 };
 
     function resize() {
-      const r = scroller
+      const r = box ? box.getBoundingClientRect()
+        : scroller
         ? scroller.getBoundingClientRect()
         : { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
       rect = { left: r.left, top: r.top, width: Math.round(r.width), height: Math.round(r.height) };
       // Phones render at lower resolution: the glow is soft, so it isn't noticeable
       dpr = rect.width < 768 ? 1 : Math.min(window.devicePixelRatio || 1, 1.5);
-      canvas.style.left = `${rect.left}px`;
-      canvas.style.top = `${rect.top}px`;
+      if (!box) {
+        canvas.style.left = `${rect.left}px`;
+        canvas.style.top = `${rect.top}px`;
+      }
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
       canvas.width = Math.max(1, Math.round(rect.width * dpr));
@@ -396,13 +429,15 @@ export default function ShaderBackground() {
 
     let frame = 0;
     let running = !document.hidden;
+    let onScreen = true; // a contained shader stops drawing when scrolled out of view
     function loop(now) {
       frame = requestAnimationFrame(loop);
-      if (running) draw(now * 0.001);
+      if (running && onScreen) draw(now * 0.001);
     }
 
     // The canvas ignores clicks, so follow the mouse on the window instead
     const onMove = e => {
+      if (box) { const r = box.getBoundingClientRect(); rect.left = r.left; rect.top = r.top; } // the page scrolls
       const x = e.clientX - rect.left, y = e.clientY - rect.top;
       if (x < 0 || y < 0 || x > rect.width || y > rect.height) { mouse.x = -1; mouse.y = -1; return; }
       mouse.x = x * dpr;
@@ -413,8 +448,11 @@ export default function ShaderBackground() {
 
     resize();
     window.addEventListener("resize", resize);
-    const ro = scroller ? new ResizeObserver(resize) : null;
-    if (ro) ro.observe(scroller);
+    const watched = box || scroller;
+    const ro = watched ? new ResizeObserver(resize) : null;
+    if (ro) ro.observe(watched);
+    const io = box ? new IntersectionObserver(([en]) => { onScreen = en.isIntersecting; }) : null;
+    if (io) io.observe(box);
 
     if (reduced) {
       draw(0); // one still frame, no motion
@@ -428,13 +466,18 @@ export default function ShaderBackground() {
     return () => {
       cancelAnimationFrame(frame);
       if (ro) ro.disconnect();
+      if (io) io.disconnect();
       window.removeEventListener("resize", resize);
       window.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseleave", onLeave);
       document.removeEventListener("visibilitychange", onVisibility);
       gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
-  }, []);
+  }, [name, contained]);
 
-  return <canvas ref={canvasRef} className="shader-bg" aria-hidden="true" />;
+  return (
+    <>
+      <canvas key={name} ref={canvasRef} className={contained ? "shader-bg shader-bg-contained" : "shader-bg"} aria-hidden="true" />
+    </>
+  );
 }

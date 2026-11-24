@@ -4,7 +4,7 @@
 import { NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/welcome", "/api/request-access"];
 
 export async function middleware(req) {
   const { pathname } = req.nextUrl;
@@ -15,6 +15,7 @@ export async function middleware(req) {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) {
     // Fail closed: never leave the app open because config is missing.
+    if (pathname === "/") return NextResponse.rewrite(new URL("/welcome", req.url));
     if (isPublic) return NextResponse.next();
     if (isApi) return new NextResponse("Supabase is not configured.", { status: 500 });
     return NextResponse.redirect(new URL("/login", req.url));
@@ -35,6 +36,10 @@ export async function middleware(req) {
   // Refreshes the session cookie if needed. Must run on every request.
   const { data: { user } } = await supabase.auth.getUser();
 
+  // Signed-out visitors to the home address see the public landing page.
+  if (!user && pathname === "/") {
+    return NextResponse.rewrite(new URL("/welcome", req.url));
+  }
   if (!user && !isPublic) {
     if (isApi) return new NextResponse("Please sign in.", { status: 401 });
     return NextResponse.redirect(new URL("/login", req.url));

@@ -22,11 +22,14 @@ export default function Login() {
     setStatus("sending");
     const { error } = await getBrowserSupabase().auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      // Never create accounts here: only people added by hand can sign in.
+      options: { emailRedirectTo: `${window.location.origin}/auth/callback`, shouldCreateUser: false },
     });
     if (error) {
       setStatus("error");
-      setMessage(error.message);
+      setMessage(/sign ?ups? not allowed|not found|not allowed/i.test(error.message)
+        ? "noaccess"
+        : error.message);
     } else {
       setStatus("sent");
     }
@@ -35,10 +38,10 @@ export default function Login() {
   return (
     <div className="wizard-wrap on-shader">
       <ShaderBackground />
-      <div className="wizard-logo">
+      <a className="wizard-logo" href="/">
         <span className="wizard-logo-mark" />
         Voltage Labs
-      </div>
+      </a>
       <div className="login-card">
         <div className="wizard-heading">Sign in</div>
 
@@ -64,7 +67,13 @@ export default function Login() {
                 required
               />
             </div>
-            {status === "error" && <div className="login-error">{message}</div>}
+            {status === "error" && (
+              <div className="login-error">
+                {message === "noaccess"
+                  ? <>That email doesn&apos;t have access yet. <a href="/">Request access</a> and we&apos;ll be in touch.</>
+                  : message}
+              </div>
+            )}
             <button className="next-btn" type="submit" disabled={status === "sending"}>
               {status === "sending" ? "Sending..." : "Email me a sign-in link"}
             </button>
